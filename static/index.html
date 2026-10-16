@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#426b50">
+  <title>Mesa de IAs</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg?v=1">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="brand"><span class="brand-mark">✳</span><span>Mesa de IAs</span></div>
+      <button class="new-chat" id="newChat"><span>＋</span> Nova conversa</button>
+      <div class="side-label">SUA MESA</div>
+      <div id="providerList" class="provider-list" role="group" aria-label="Provedores de IA na sua mesa" aria-live="polite"></div>
+      <div class="sidebar-bottom">
+        <div class="privacy-icon">⌂</div>
+        <div><strong>Rodando neste computador</strong><small>“Instalado” não confirma login, saldo ou cota. Ollama processa localmente.</small></div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div class="mobile-brand"><span class="brand-mark">✳</span> Mesa de IAs</div>
+        <div class="topbar-spacer"></div>
+        <div class="connection"><span class="green-dot"></span> Conversa entre provedores</div>
+      </header>
+
+      <section class="conversation" id="conversation">
+        <div class="welcome" id="welcome">
+          <div class="hero-roster" id="heroRoster"><span class="hero-roster-dot"></span><span id="heroRosterText">Preparando sua mesa</span><span class="hero-roster-mark">✳</span></div>
+          <div class="welcome-art" aria-hidden="true">
+            <svg viewBox="0 0 420 180" role="presentation">
+              <defs>
+                <radialGradient id="tableGlow"><stop stop-color="#a8cf85" stop-opacity=".28"/><stop offset="1" stop-color="#a8cf85" stop-opacity="0"/></radialGradient>
+                <linearGradient id="ringStroke"><stop stop-color="#e9bb73" stop-opacity=".08"/><stop offset=".5" stop-color="#d9c795" stop-opacity=".82"/><stop offset="1" stop-color="#9bc38e" stop-opacity=".18"/></linearGradient>
+                <linearGradient id="nodeFill" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#d6eda9"/><stop offset="1" stop-color="#78a873"/></linearGradient>
+              </defs>
+              <ellipse cx="210" cy="111" rx="156" ry="61" fill="url(#tableGlow)"/>
+              <g class="art-orbit art-orbit-wide"><ellipse cx="210" cy="104" rx="145" ry="45"/><ellipse cx="210" cy="104" rx="145" ry="45" transform="rotate(-19 210 104)"/></g>
+              <ellipse class="art-orbit art-orbit-inner" cx="210" cy="104" rx="91" ry="28" transform="rotate(14 210 104)"/>
+              <path class="art-link" d="M70 82 153 101m197-20-82 20M182 43l20 34m50 68-27-28"/>
+              <ellipse cx="210" cy="105" rx="47" ry="15" fill="#1c2018" stroke="#9ec18a" stroke-opacity=".55"/>
+              <ellipse cx="210" cy="101" rx="31" ry="10" fill="#a4c786" fill-opacity=".13" stroke="#d4bd82" stroke-opacity=".8"/>
+              <circle class="art-core" cx="210" cy="98" r="9" fill="url(#nodeFill)"/>
+              <path d="M210 82v32M194 98h32M199 87l22 22m0-22-22 22" stroke="#edf3d5" stroke-width="1.1" stroke-linecap="round" opacity=".9"/>
+              <g class="art-node node-a"><circle r="11" fill="#273223" stroke="#d3b77a" stroke-opacity=".9"/><circle r="4" fill="url(#nodeFill)"/></g>
+              <g class="art-node node-b"><circle r="11" fill="#273223" stroke="#a8c892" stroke-opacity=".9"/><circle r="4" fill="url(#nodeFill)"/></g>
+              <g class="art-node node-c"><circle r="11" fill="#273223" stroke="#d3b77a" stroke-opacity=".9"/><circle r="4" fill="url(#nodeFill)"/></g>
+              <g class="art-node node-d"><circle r="11" fill="#273223" stroke="#a8c892" stroke-opacity=".9"/><circle r="4" fill="url(#nodeFill)"/></g>
+              <circle class="art-spark" cx="82" cy="52" r="2" fill="#e5bf78"/><circle class="art-spark spark-b" cx="336" cy="131" r="2" fill="#b2d795"/><circle class="art-spark spark-c" cx="286" cy="39" r="1.5" fill="#e5bf78"/>
+            </svg>
+            <span class="art-caption">IDEIAS EM ÓRBITA · UMA SÍNTESE NO CENTRO</span>
+          </div>
+          <p class="eyebrow">MESA DE COLABORAÇÃO MULTI-IA</p>
+          <h1>Sua ideia entra em debate.<br><em>Você sai com clareza.</em></h1>
+          <p class="welcome-copy">Escolha duas ou mais IAs. Elas criam respostas independentes, cruzam argumentos e entregam uma síntese — com as contribuições abertas para você conferir.</p>
+          <div class="steps">
+            <div><span>01</span><b>Abrem caminhos</b><small>Respostas próprias mostram mais de uma opção</small></div>
+            <div><span>02</span><b>Testam ideias</b><small>A revisão busca riscos e pontos cegos</small></div>
+            <div><span>03</span><b>Fecham a mesa</b><small>Uma síntese organiza a recomendação</small></div>
+          </div>
+          <p class="prompt-label">Escolha por onde começar</p>
+          <div class="suggestions">
+            <button data-prompt="Compare estas opções por custo, esforço, risco e benefício. Recomende a melhor para este objetivo: "><span class="suggestion-icon">↗</span><span class="suggestion-copy"><b>Decidir</b><small>Compare caminhos, riscos e benefícios</small></span></button>
+            <button data-prompt="Transforme esta ideia em um plano prático com etapas, prioridades, riscos e primeiro passo: "><span class="suggestion-icon">✳</span><span class="suggestion-copy"><b>Planejar</b><small>Organize etapas e escolha o primeiro passo</small></span></button>
+            <button data-prompt="Faça uma revisão crítica desta proposta. Identifique premissas frágeis, riscos, contradições e melhorias específicas: "><span class="suggestion-icon">⌕</span><span class="suggestion-copy"><b>Revisar</b><small>Encontre brechas antes de seguir</small></span></button>
+            <button data-prompt="Crie uma primeira versão completa, clara e original de: "><span class="suggestion-icon">✎</span><span class="suggestion-copy"><b>Criar</b><small>Comece com algo pronto para ajustar</small></span></button>
+          </div>
+        </div>
+        <div id="messages" class="messages" aria-live="polite"></div>
+      </section>
+
+      <footer class="composer-wrap">
+        <div class="composer-tools">
+          <label for="mode">Modo</label>
+          <select id="mode" aria-label="Escolher a velocidade da conversa">
+            <option value="complete">Completa</option>
+            <option value="fast">Rápida</option>
+          </select>
+          <span class="separator"></span>
+          <label for="synthesizer">Resposta final por</label>
+          <select id="synthesizer" aria-label="Escolher quem prepara a resposta final"></select>
+          <span class="separator"></span>
+          <span id="selectionCount">0 IAs selecionadas</span>
+        </div>
+        <form id="chatForm" class="composer">
+          <textarea id="messageInput" rows="1" placeholder="Pergunte à sua mesa de IAs…" aria-label="Sua mensagem"></textarea>
+          <button id="sendButton" type="submit" aria-label="Enviar mensagem"><span>↑</span></button>
+        </form>
+        <div class="composer-note" id="modeNote">Completa inclui revisão cruzada. Cada provedor usa a autenticação e os limites da sua conta.</div>
+      </footer>
+    </main>
+  </div>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>
