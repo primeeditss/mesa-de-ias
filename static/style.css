@@ -1,11 +1,16 @@
 :root{--paper:#f6f5f1;--white:#fff;--ink:#20221f;--muted:#777a72;--line:#e8e7e1;--green:#426b50;--green-soft:#eaf1e9;--orange:#d27d4d;--shadow:0 8px 30px rgba(36,42,33,.06)}
 *{box-sizing:border-box}
-body{margin:0;background:var(--paper);color:var(--ink);font-family:'DM Sans',sans-serif;height:100vh;overflow:hidden}
-.layout{height:100%;display:grid;grid-template-columns:300px 1fr}
-.sidebar{background:#efeee9;border-right:1px solid var(--line);display:flex;flex-direction:column;padding:26px 18px 18px;min-width:0}
-.brand{display:flex;align-items:center;gap:10px;font:800 17px Manrope,sans-serif;letter-spacing:-.5px;padding:0 8px 32px}
+html{height:100%}
+/* A página em si não rola: quem rola são a conversa e a lista da barra lateral.
+   Cada elo da corrente de altura precisa de min-height:0 (e a linha do grid
+   precisa de minmax(0,1fr)) para o filho rolar em vez de esticar o pai. Sem
+   isso a linha do grid cresce junto com a resposta e a rolagem desaparece. */
+body{margin:0;background:var(--paper);color:var(--ink);font-family:'DM Sans',sans-serif;height:100%;overflow:hidden}
+.layout{height:100%;display:grid;grid-template-columns:300px 1fr;grid-template-rows:minmax(0,1fr)}
+.sidebar{background:#efeee9;border-right:1px solid var(--line);display:flex;flex-direction:column;padding:26px 18px 18px;min-width:0;min-height:0;overflow:hidden}
+.brand{display:flex;align-items:center;gap:10px;font:800 17px Manrope,sans-serif;letter-spacing:-.5px;padding:0 8px 32px;flex:none}
 .brand-mark{display:inline-grid;place-items:center;width:28px;height:28px;border-radius:9px;background:var(--green);color:#fff;font-size:20px}
-.new-chat{height:44px;background:var(--white);border:1px solid #e2e1db;border-radius:9px;color:var(--ink);font:600 13px 'DM Sans',sans-serif;text-align:left;padding:0 13px;cursor:pointer;box-shadow:0 1px 2px #00000008}
+.new-chat{height:44px;flex:none;background:var(--white);border:1px solid #e2e1db;border-radius:9px;color:var(--ink);font:600 13px 'DM Sans',sans-serif;text-align:left;padding:0 13px;cursor:pointer;box-shadow:0 1px 2px #00000008}
 .new-chat span{font-size:20px;vertical-align:-2px;margin-right:7px;color:var(--green)}
 .provider-list{display:flex;flex-direction:column;gap:6px}
 .provider-option{display:flex;align-items:center;gap:10px;padding:10px 9px;border-radius:9px;cursor:pointer;transition:background .15s}
@@ -18,17 +23,17 @@ body{margin:0;background:var(--paper);color:var(--ink);font-family:'DM Sans',san
 .provider-name{font-size:12px;font-weight:600;flex:1}
 .provider-state{font:10px 'DM Mono',monospace;color:#9b9d95}
 .provider-state.ready{color:var(--green)}
-.sidebar-bottom{margin-top:auto;display:flex;gap:10px;padding:14px 10px;border:1px solid #e0dfd9;border-radius:10px;background:#f4f3ef}
+.sidebar-bottom{flex:none;margin-top:auto;display:flex;gap:10px;padding:14px 10px;border:1px solid #e0dfd9;border-radius:10px;background:#f4f3ef}
 .privacy-icon{width:25px;height:25px;background:var(--green-soft);color:var(--green);display:grid;place-items:center;border-radius:8px;flex:none}
 .sidebar-bottom strong{font-size:11px;display:block;margin:1px 0 4px}
 .sidebar-bottom small{display:block;color:var(--muted);font-size:10px;line-height:1.45}
-.main{height:100%;min-width:0;display:flex;flex-direction:column}
+.main{height:100%;min-height:0;min-width:0;display:flex;flex-direction:column;overflow:hidden}
 .topbar{height:62px;border-bottom:1px solid var(--line);display:flex;align-items:center;padding:0 34px;flex:none}
 .topbar-spacer{flex:1}
 .connection{font:11px 'DM Mono',monospace;color:#74776e;display:flex;align-items:center;gap:8px}
 .green-dot{width:7px;height:7px;background:#68a171;border-radius:100%;box-shadow:0 0 0 3px #68a17122}
 .mobile-brand{display:none;align-items:center;gap:8px;font:800 15px Manrope}
-.conversation{flex:1;overflow:auto;padding:56px 24px 28px;scroll-behavior:smooth}
+.conversation{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;padding:56px 24px 28px;scroll-behavior:smooth}
 .welcome{max-width:710px;margin:4vh auto 0;text-align:center}
 .welcome-symbol{margin:auto auto 20px;width:48px;height:48px;border-radius:16px;background:var(--green);color:#fff;display:grid;place-items:center;font-size:32px;box-shadow:0 8px 20px #426b5024}
 .eyebrow{font:500 10px 'DM Mono',monospace;letter-spacing:1.5px;color:var(--green);margin:0 0 12px}
@@ -237,3 +242,27 @@ body:before{display:none}.topbar{backdrop-filter:none;background:rgba(24,23,18,.
 .history-item:hover .history-remove,.history-remove:focus-visible{opacity:1}
 .history-remove:hover{background:rgba(217,120,96,.16);color:#e9a58e}
 .history-remove:disabled{opacity:.4;cursor:wait}
+
+/* ===== Item 7 · controle de rolagem do chat =====
+   A barra nativa fica escondida apenas na conversa: o controle flutuante mostra
+   a posição e faz o papel de barra (arrastar o polegar, clicar na trilha, setas
+   e teclado). Ele só aparece quando há o que rolar.                          */
+.main{position:relative}
+.conversation{scrollbar-width:none}
+.conversation::-webkit-scrollbar{width:0;height:0}
+
+.scroll-control{position:absolute;top:50%;right:10px;transform:translateY(-50%);z-index:6;display:flex;flex-direction:column;align-items:center;gap:7px;padding:8px 5px;border-radius:999px;background:linear-gradient(180deg,rgba(41,39,31,.82),rgba(30,29,23,.86));border:1px solid rgba(150,132,95,.34);box-shadow:0 12px 28px rgba(0,0,0,.3);opacity:.42;transition:opacity .45s ease}
+.scroll-control[hidden]{display:none}
+.scroll-control:hover,.scroll-control:focus-within{opacity:1}
+.scroll-jump{width:22px;height:22px;display:grid;place-items:center;border:0;border-radius:50%;background:transparent;color:#cfc4ae;font:13px/1 'DM Sans',sans-serif;cursor:pointer;transition:background .3s ease,color .3s ease,transform .4s ease,opacity .4s ease}
+.scroll-jump:hover{background:rgba(221,194,139,.16);color:#fff1d5}
+.scroll-jump:active{transform:translateY(1px) scale(.92)}
+.scroll-jump.is-spent{opacity:.28;pointer-events:none}
+.scroll-track{position:relative;width:6px;height:96px;border-radius:999px;background:rgba(255,238,205,.1);box-shadow:inset 0 0 0 1px rgba(150,132,95,.16);cursor:pointer;touch-action:none;outline:none}
+.scroll-track:focus-visible{box-shadow:inset 0 0 0 1px rgba(150,132,95,.16),0 0 0 3px rgba(221,194,139,.24)}
+.scroll-thumb{position:absolute;left:0;top:0;width:100%;border-radius:999px;background:linear-gradient(180deg,#e8c98d,#9bc38e);box-shadow:0 0 12px rgba(221,194,139,.3);cursor:grab;will-change:transform}
+.scroll-thumb:active{cursor:grabbing}
+.scroll-control.is-dragging .scroll-thumb{background:linear-gradient(180deg,#f1d9a7,#acd298)}
+
+@media(max-width:640px){.scroll-control{right:4px;padding:7px 4px}.scroll-track{height:76px}}
+@media(prefers-reduced-motion:reduce){.scroll-control,.scroll-jump{transition:none}}

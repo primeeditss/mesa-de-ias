@@ -560,6 +560,114 @@ document.querySelectorAll("[data-prompt]").forEach(button => {
   });
 });
 
+// --------------------------- Rolagem do chat ---------------------------
+// O polegar só muda de altura e de transform (nada de reflow por pixel) e o
+// controle é uma barra de verdade: arrastar, clicar na trilha, setas, teclado.
+
+const scrollControl = document.querySelector("#scrollControl");
+const scrollTrack = document.querySelector("#scrollTrack");
+const scrollThumb = document.querySelector("#scrollThumb");
+const scrollTopButton = document.querySelector("#scrollTopButton");
+const scrollBottomButton = document.querySelector("#scrollBottomButton");
+
+// "auto" em scrollTo significa "use o scroll-behavior do CSS" — que aqui é
+// smooth. Para pular de verdade (arrastar o polegar, menos movimento) é
+// preciso pedir "instant".
+function comportamentoSuave() {
+  return window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth";
+}
+
+function limiteDeScroll() {
+  return Math.max(0, conversation.scrollHeight - conversation.clientHeight);
+}
+
+function moverConversa(top, instantaneo = false) {
+  conversation.scrollTo({
+    top: Math.max(0, Math.min(top, limiteDeScroll())),
+    behavior: instantaneo ? "instant" : comportamentoSuave(),
+  });
+}
+
+function atualizarControleDeScroll() {
+  if (!scrollControl) return;
+  const limite = limiteDeScroll();
+  // Sem o que rolar (tela de boas-vindas, resposta curta), o controle sai de cena.
+  if (limite < 24) {
+    scrollControl.hidden = true;
+    return;
+  }
+  scrollControl.hidden = false;
+  const trilha = scrollTrack.clientHeight || 96;
+  const alturaPolegar = Math.max(26, Math.round(trilha * (conversation.clientHeight / conversation.scrollHeight)));
+  const curso = Math.max(0, trilha - alturaPolegar);
+  const progresso = Math.min(1, Math.max(0, conversation.scrollTop / limite));
+  scrollThumb.style.height = `${alturaPolegar}px`;
+  scrollThumb.style.transform = `translateY(${Math.round(curso * progresso)}px)`;
+  scrollTrack.setAttribute("aria-valuenow", String(Math.round(progresso * 100)));
+  scrollTopButton.classList.toggle("is-spent", progresso <= 0.001);
+  scrollBottomButton.classList.toggle("is-spent", progresso >= 0.999);
+}
+
+function polegarPara(event, instantaneo) {
+  const caixa = scrollTrack.getBoundingClientRect();
+  const curso = Math.max(1, caixa.height - (scrollThumb.offsetHeight || 26));
+  const topo = event.clientY - caixa.top - (scrollThumb.offsetHeight || 26) / 2;
+  const progresso = Math.min(1, Math.max(0, topo / curso));
+  moverConversa(progresso * limiteDeScroll(), instantaneo);
+}
+
+function iniciarControleDeScroll() {
+  if (!scrollControl) return;
+  atualizarControleDeScroll();
+
+  // Um quadro por vez: durante a rolagem o polegar não recalcula à toa.
+  let quadro = 0;
+  conversation.addEventListener("scroll", () => {
+    if (quadro) return;
+    quadro = requestAnimationFrame(() => {
+      quadro = 0;
+      atualizarControleDeScroll();
+    });
+  }, {passive: true});
+
+  scrollTopButton.addEventListener("click", () => moverConversa(0));
+  scrollBottomButton.addEventListener("click", () => moverConversa(limiteDeScroll()));
+
+  let arrastando = false;
+  scrollTrack.addEventListener("pointerdown", event => {
+    event.preventDefault();
+    arrastando = true;
+    scrollControl.classList.add("is-dragging");
+    polegarPara(event, true);
+  });
+  window.addEventListener("pointermove", event => {
+    if (arrastando) polegarPara(event, true);
+  });
+  for (const fim of ["pointerup", "pointercancel"]) {
+    window.addEventListener(fim, () => {
+      arrastando = false;
+      scrollControl.classList.remove("is-dragging");
+    });
+  }
+
+  scrollTrack.addEventListener("keydown", event => {
+    const pagina = conversation.clientHeight * 0.9;
+    const saltos = {ArrowUp: -70, ArrowDown: 70, PageUp: -pagina, PageDown: pagina};
+    if (event.key === "Home") moverConversa(0);
+    else if (event.key === "End") moverConversa(limiteDeScroll());
+    else if (saltos[event.key] !== undefined) moverConversa(conversation.scrollTop + saltos[event.key]);
+    else return;
+    event.preventDefault();
+  });
+
+  if (window.ResizeObserver) {
+    const observador = new ResizeObserver(() => atualizarControleDeScroll());
+    observador.observe(conversation);
+    observador.observe(messages);
+  }
+  window.addEventListener("resize", atualizarControleDeScroll);
+}
+
 // ------------------------------- Histórico -------------------------------
 // As conversas ficam em `historico.json`, na pasta do projeto. A Mesa só lê e
 // grava esse arquivo local; nada é enviado para fora do computador.
@@ -729,5 +837,6 @@ async function initialize() {
     providerList.textContent = "Não foi possível conectar ao servidor local.";
   }
   loadHistory();
+  iniciarControleDeScroll();
 }
 initialize();

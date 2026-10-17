@@ -58,6 +58,24 @@ Todos os itens originais estão concluídos. As pendências restantes estão no 
 
 Medido com "Responda apenas: OK" (Gemini + OpenRouter): ~7 s, contra ~50 s antes.
 
+## Terceira rodada — layout e rolagem
+
+1. ✅ **Corrente de alturas**: `body` era `height:100vh` com `overflow:hidden` e o `.layout`
+   (grid) deixava a linha crescer com o conteúdo (`min-height:auto`). Resultado: `.main`
+   esticava junto com a resposta, `.conversation` nunca tinha o que rolar e o resto da tela
+   ficava cortado. Corrigido com `grid-template-rows:minmax(0,1fr)` no `.layout` e
+   `min-height:0` em `.main`, `.sidebar` e `.conversation` (esta com `overflow-y:auto`).
+2. ✅ **Controle de rolagem do chat**: pílula flutuante (`.scroll-control`) com setas, trilha e
+   polegar. Funciona arrastando o polegar, clicando na trilha, pelas setas e pelo teclado
+   (setas, PageUp/PageDown, Home/End), com `aria-valuenow` acompanhando. Só aparece quando há
+   mais de 24 px fora da tela (`atualizarControleDeScroll()`, atualizado por `ResizeObserver`).
+   `comportamentoSuave()` troca `smooth` por `instant` quando o sistema pede menos movimento.
+   A barra nativa fica escondida **apenas na conversa** (`scrollbar-width:none`) para não
+   duplicar o controle.
+
+Medido numa janela de 656 px de altura: `.main` fica com 656 px (antes esticava para 4102 px)
+e a conversa, com 8446 px de conteúdo, rola até o fim (0 → 400 → 8446).
+
 ## Decisões técnicas
 
 - **Gemini**: API do Google AI Studio, chave `GEMINI_API_KEY` no `.env`.

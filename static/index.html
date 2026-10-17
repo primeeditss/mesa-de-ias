@@ -79,6 +79,14 @@
         <div id="messages" class="messages" aria-live="polite"></div>
       </section>
 
+      <div class="scroll-control" id="scrollControl" hidden>
+        <button class="scroll-jump" id="scrollTopButton" type="button" title="Ir ao topo da conversa" aria-label="Ir ao topo da conversa">↑</button>
+        <div class="scroll-track" id="scrollTrack" role="scrollbar" aria-controls="conversation" aria-orientation="vertical" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="Posição da leitura" tabindex="0">
+          <div class="scroll-thumb" id="scrollThumb"></div>
+        </div>
+        <button class="scroll-jump" id="scrollBottomButton" type="button" title="Ir ao fim da conversa" aria-label="Ir ao fim da conversa">↓</button>
+      </div>
+
       <footer class="composer-wrap">
         <div class="composer-tools">
           <label for="mode">Modo</label>
