@@ -1,9 +1,10 @@
-const providerNames = {claude: "Claude Code", codex: "Codex", opencode: "OpenCode", gemini: "Gemini CLI", openrouter: "OpenRouter", cursor: "Cursor Agent", qwen: "Qwen Code", ollama: "Ollama local"};
+const providerNames = {claude: "Claude Code", codex: "Codex", opencode: "OpenCode", gemini: "Gemini", openrouter: "OpenRouter", cursor: "Cursor Agent", qwen: "Qwen Code", ollama: "Ollama local"};
 const providerDetails = {openrouter: "Modelos grátis", ollama: "Qwen 3.5 · 4B"};
 const providerMarks = {claude: "C", codex: "O", opencode: "⌘", gemini: "G", openrouter: "R", cursor: "↗", qwen: "Q", ollama: "◉"};
-const pausedProviderIds = new Set(["claude", "opencode"]);
+// Espelha o PAUSED_PROVIDERS do servidor: vazio = todos os detectados liberados.
+const pausedProviderIds = new Set();
 // Ordem da barra lateral: primeiro a mesa principal do usuário, depois o resto.
-const mesaPrincipalIds = ["codex", "opencode", "gemini", "openrouter", "ollama"];
+const mesaPrincipalIds = ["codex", "opencode", "gemini", "openrouter", "ollama", "claude"];
 const state = {providers: [], selected: new Set(), history: [], busy: false, providersRendered: false};
 
 const providerList = document.querySelector("#providerList");

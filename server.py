@@ -62,16 +62,14 @@ PROVIDERS = {
 # Providers the Mesa talks to directly over HTTP — no terminal is involved.
 DIRECT_API_PROVIDERS = ("gemini", "openrouter", "ollama")
 
-# Temporarily pause slow providers in the Mesa without uninstalling their CLIs.
-# Remove an ID here when the user wants it available again.
-PAUSED_PROVIDERS = {
-    "claude": "Pausado por enquanto",
-    "opencode": "Pausado por enquanto",
-}
+# Temporarily pause slow providers in the Mesa without uninstalling their CLIs:
+# add an entry here (e.g. "claude": "Pausado por enquanto") to hide it again.
+# Empty means every provider found on this computer is offered.
+PAUSED_PROVIDERS: dict[str, str] = {}
 
 jobs: dict[str, dict[str, Any]] = {}
 jobs_lock = threading.Lock()
-ollama_status_cache: dict[str, Any] = {"checked": 0.0, "ready": False, "reason": ""}
+ollama_status_cache: dict[str, Any] = {"checked": 0.0, "ready": False, "mode": "unknown", "reason": ""}
 ollama_status_lock = threading.Lock()
 
 
@@ -151,8 +149,13 @@ def provider_status() -> list[dict[str, Any]]:
             now = time.time()
             with ollama_status_lock:
                 if now - ollama_status_cache["checked"] > 20:
-                    ready = False
-                    reason = f"Inicie o Ollama e baixe o modelo {OLLAMA_MODEL}"
+                    # Três situações bem diferentes, para o usuário saber o que fazer:
+                    # "offline" = aplicativo fechado, "missing" = falta o modelo, "ready".
+                    ready, mode = False, "offline"
+                    reason = (
+                        f"O Ollama não respondeu em {ollama_base_url()}. Abra o aplicativo do "
+                        "Ollama para ativar; a Mesa conversa com ele por HTTP, sem terminal."
+                    )
                     try:
                         with urlopen(f"{ollama_base_url()}/api/tags", timeout=5) as response:
                             tags = {
@@ -160,14 +163,24 @@ def provider_status() -> list[dict[str, Any]]:
                                 for model in json.loads(response.read().decode("utf-8")).get("models", [])
                             }
                         if OLLAMA_MODEL in tags:
-                            ready, reason = True, ""
+                            ready, mode, reason = True, "ready", ""
                         else:
-                            reason = f"Baixe o modelo {OLLAMA_MODEL} para ativar"
+                            mode = "missing"
+                            reason = (
+                                f"O Ollama está aberto, mas falta o modelo {OLLAMA_MODEL}. "
+                                f"Baixe com: ollama pull {OLLAMA_MODEL}"
+                            )
                     except Exception:
                         pass
-                    ollama_status_cache.update(ready=ready, reason=reason, checked=time.time())
+                    ollama_status_cache.update(
+                        ready=ready, mode=mode, reason=reason, checked=time.time()
+                    )
                 installed = bool(ollama_status_cache["ready"])
-                state = "modelo pronto" if installed else "modelo ausente"
+                state = {
+                    "ready": "modelo pronto",
+                    "missing": "modelo ausente",
+                    "offline": "Ollama fechado",
+                }.get(str(ollama_status_cache["mode"]), "indisponível")
                 reason = str(ollama_status_cache["reason"])
             result.append({
                 "id": key,
