@@ -1,6 +1,6 @@
 # Mesa de IAs
 
-Aplicativo local de conversa multiprovedor. Você envia uma pergunta, as IAs selecionadas respondem em paralelo, leem as contribuições umas das outras e fazem uma revisão; por fim, uma IA escolhida produz a resposta única. Os provedores ficam numa barra lateral dividida entre **Sua mesa** e **Outros detectados**, com o **Histórico** das conversas logo abaixo.
+Aplicativo local de conversa multiprovedor. Você envia uma pergunta, as IAs selecionadas respondem em paralelo, leem as contribuições umas das outras e fazem uma revisão; por fim, uma IA escolhida produz a resposta única. Os provedores ficam numa barra lateral dividida entre **Sua mesa** e **Outros detectados**, com o **Painel de confiança** (o botão **Testar minhas IAs**) e o **Histórico** das conversas logo abaixo.
 
 ## Abrir
 
@@ -20,7 +20,7 @@ OpenRouter também está disponível com modelos sem custo. Crie uma conta e uma
 
 Cursor Agent só aparece como disponível quando o comando `cursor-agent` está acessível no PATH. A documentação atual do Cursor orienta a instalação da CLI no Windows via WSL.
 
-Claude Code e OpenCode voltaram a ficar disponíveis. Para pausar algum provedor (por exemplo, um CLI lento), coloque o ID dele em `PAUSED_PROVIDERS` no `server.py` **e** em `pausedProviderIds` no `static/app.js`, e reinicie o servidor. A divisão da barra lateral também é configurável: `mesaPrincipalIds` no `static/app.js` decide quem entra em **Sua mesa**; o resto vai para **Outros detectados**. O modo Completo faz respostas paralelas, uma rodada de revisão e uma síntese final. O modo Rápido pula a revisão cruzada e faz a síntese com as respostas iniciais, reduzindo uma rodada de chamadas sem trocar os modelos selecionados. Ambos respeitam a autenticação, os limites e a cobrança de cada serviço. Durante a conversa, a tela acompanha as etapas e mostra prévias do texto que chega de cada IA; ao final, exibe a resposta consolidada e deixa as contribuições individuais disponíveis para consulta. A Mesa mostra respostas e progresso, não o raciocínio privado dos modelos.
+Claude Code e OpenCode voltaram a ficar disponíveis. Para pausar algum provedor (por exemplo, um CLI lento), coloque o ID dele em `PAUSED_PROVIDERS` no `server.py` **e** em `pausedProviderIds` no `static/app.js`, e reinicie o servidor. A divisão da barra lateral também é configurável: `mesaPrincipalIds` no `static/app.js` decide quem entra em **Sua mesa**; o resto vai para **Outros detectados**. O modo Completo faz respostas paralelas, uma rodada de revisão e uma síntese final. O modo Rápido pula a revisão cruzada e faz a síntese com as respostas iniciais, reduzindo uma rodada de chamadas sem trocar os modelos selecionados. Ambos respeitam a autenticação, os limites e a cobrança de cada serviço. Durante a conversa, a tela acompanha as etapas e mostra o tempo de cada IA e prévias do texto que chega; ao final, exibe a resposta consolidada com o cronômetro de cada participante e deixa as contribuições individuais disponíveis para consulta. A Mesa mostra respostas e progresso, não o raciocínio privado dos modelos.
 
 ## Velocidade
 
@@ -31,6 +31,22 @@ A Mesa evita o trabalho que não vira resposta:
 - **Modo Rápido automático.** Perguntas curtas pulam a revisão cruzada sozinhas, e o seletor mostra a escolha. Assim que você troca o modo à mão, a Mesa para de mexer nele. O limite de tamanho está em `MODO_RAPIDO_ATE` no `static/app.js`.
 
 Com isso, uma pergunta simples respondida por Gemini e OpenRouter cai de ~50 s para ~7 s. Os CLIs (Claude Code, Codex, OpenCode, Cursor) levam de 16 a 22 s por chamada só para iniciar, então rendem mais em perguntas que realmente precisam deles.
+
+## Painel de confiança
+
+O botão **Testar minhas IAs**, na barra lateral logo abaixo da lista de provedores, faz uma pergunta mínima ("Responda apenas: OK") para cada IA detectada, todas ao mesmo tempo, e mostra quem respondeu, em quanto tempo e por que falhou — sem precisar abrir uma conversa inteira para descobrir.
+
+O resultado abre num cartão na conversa: ✓ com o tempo de quem respondeu, ✕ com o motivo de quem não respondeu — **sem login**, **sem saldo**, **limite atingido**, **sem conexão** ou **demorou demais** — e o começo da resposta de quem foi bem. O botão **Testar de novo** repete a checagem. O `×` fecha o cartão, e o botão da barra lateral passa a dizer **Ver resultado do teste**: ele reabre a lista sem gastar cota de novo.
+
+O teste **nunca roda sozinho** — cada chamada consome cota ou limite do serviço, então quem decide é você. Ele também atualiza a mesma memória de falhas usada pelas rodadas: quem falha ganha a etiqueta na lista e sai da seleção (desde que sobrem duas IAs), e quem voltou a responder perde a etiqueta. O motivo vem do erro real do provedor, já sem os códigos de cor que os CLIs misturam na saída, para você poder copiar e pedir ajuda se precisar.
+
+Cada teste tem um prazo (60 s no total): quem não responder dentro dele aparece como "demorou demais" — e, se responder depois, o painel se corrige sozinho.
+
+### Cronômetro de cada IA
+
+Durante a rodada, o cartão de progresso mostra o tempo de cada IA ("Concluída em 3,4 s" ou "Não respondeu em 12,2 s"). Na resposta final, o título traz o tempo da síntese ("RESPOSTA CONSOLIDADA · Gemini · 2,1 s") e o rodapé **Painel de confiança desta rodada** lista cada participante com o seu tempo — ou com o motivo de ter ficado de fora.
+
+Os tempos valem para a rodada que acabou de acontecer: não são gravados no histórico, então reabrir uma conversa antiga não mostra o rodapé.
 
 ## Histórico de conversas
 

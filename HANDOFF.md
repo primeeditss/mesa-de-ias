@@ -26,6 +26,7 @@ resposta final.
 - ✅ Modo Rápido automático em perguntas curtas (até 120 caracteres)
 - ✅ Histórico de conversas em `historico.json`, com seção própria na barra lateral
 - ✅ Busca no histórico (ignora acento e maiúscula) e exportação da conversa em `.md` ou `.html`
+- ✅ Painel de confiança: "Testar minhas IAs" (tempo e motivo de cada uma) e cronômetro por IA na rodada
 
 ## O que precisa ser feito
 
@@ -101,6 +102,37 @@ formatos, 404 de id inexistente, 400 de formato desconhecido, HTML sem `script` 
 lista sem busca inalterada) e no navegador (busca, limpar, abrir o menu e baixar os dois
 arquivos: `.md` de 658 bytes e `.html` de 4047 bytes, com os nomes certos).
 
+## Quinta rodada — painel de confiança (Opção B: testar as IAs + cronômetros)
+
+1. ✅ **Botão "Testar minhas IAs"** (barra lateral, logo abaixo da lista de provedores):
+   `POST /api/testar` cria o teste e chama `run_provider()` de cada IA detectada **ao mesmo
+   tempo**, com uma pergunta mínima ("Responda apenas: OK"). O frontend acompanha por
+   `GET /api/testar/<id>` e as linhas vão aparecendo conforme cada IA responde. O teste nunca
+   roda sozinho: cada chamada consome cota/limite, então quem decide é a pessoa, no botão.
+2. ✅ **O resultado é um cartão na conversa**: cada IA aparece com ✓ ou ✕, o tempo em segundos e
+   o motivo (`limite atingido`, `sem saldo`, `sem login`, `sem conexão` ou `demorou demais`),
+   mais o começo da resposta de quem foi bem. O cartão tem "Testar de novo" e um `×` para
+   fechar; fechado, o botão vira "Ver resultado do teste" e reabre a lista **sem gastar cota**.
+3. ✅ **O teste alimenta a memória de falhas**: quem falha fica etiquetado na lista de IAs e sai
+   da seleção (desde que sobrem duas); quem volta a responder sai da etiqueta.
+   `short_failure_reason()` ganhou `limite atingido` (cota, `429`, "usage limit") e manteve
+   `sem saldo` (saldo, crédito) — a ordem da checagem importa, porque o erro de cota do Gemini
+   também cita "billing".
+4. ✅ **Cronômetros**: `run_parallel()` mede o tempo de cada IA e publica `provider_seconds`; a
+   síntese é cronometrada em `synth_seconds`. Durante a rodada, o cartão de progresso mostra
+   "Concluída em 3,4 s" / "Não respondeu em 12,2 s" em cada linha; na resposta final, o título
+   ganha o tempo da síntese ("RESPOSTA CONSOLIDADA · Gemini · 2,1 s") e o rodapé "Painel de
+   confiança desta rodada" lista cada IA com o seu tempo — ou com o motivo da falha.
+5. ✅ **Erro cru, mas limpo**: `strip_ansi()` tira os códigos de cor que os CLIs jogam no meio do
+   erro e `clean_detail()` corta em 300 caracteres. É o texto que a pessoa copia para pedir
+   ajuda, e é o que aparece embaixo de quem falhou.
+
+Testado com 51 verificações automáticas no `server.py` (as IAs são **substituídas por respostas
+falsas**: nenhuma cota é gasta; cobre as etiquetas, o teste completo, lista explícita, 400, 404,
+a IA que passa do prazo e os cronômetros da rodada) e no navegador (botão, linhas aparecendo uma
+a uma, tempos, etiquetas na lista de IAs, abrir/fechar sem chamada nova e o rodapé da resposta
+com uma IA falhando e outra demorando 9 s).
+
 ## Decisões técnicas
 
 - **Gemini**: API do Google AI Studio, chave `GEMINI_API_KEY` no `.env`.
@@ -131,6 +163,17 @@ arquivos: `.md` de 658 bytes e `.html` de 4047 bytes, com os nomes certos).
   sem a Mesa estar aberta. O Markdown é o formato canônico; o HTML sai em tom claro de papel,
   mesmo com o app escuro, porque é o que funciona ao imprimir e ao enviar. O CSS do HTML é uma
   versão reduzida do tema, embutida no próprio arquivo.
+- **Teste das IAs**: roda como tarefa própria (`checks`, o mesmo desenho de "job" da conversa),
+  com prazo de `TEST_TIMEOUT_SECONDS` (60 s) para o conjunto. Quem não voltar dentro do prazo
+  aparece como "demorou demais" — e, se responder depois, o próprio worker corrige a linha do
+  painel. O teste escreve na mesma `provider_last_error` da rodada: é o que faz a lista de IAs
+  ficar com a etiqueta certa.
+- **Onde o resultado do teste aparece**: num cartão da conversa, não na barra lateral. A barra
+  tem três blocos (lista de IAs, painel, histórico) e, com a lista dentro dela, a lista de IAs
+  ficava com menos de 120 px de altura. O resultado é temporário: não vai para o histórico.
+- **Cronômetros**: `provider_seconds` guarda o tempo da **rodada inicial** (é o número que
+  interessa para confiar numa IA) e `synth_seconds`, o da síntese. O tempo da revisão cruzada
+  aparece no texto do cartão de progresso, mas não substitui o da resposta.
 
 ## Progresso (git)
 
@@ -140,6 +183,7 @@ arquivos: `.md` de 658 bytes e `.html` de 4047 bytes, com os nomes certos).
 - rodada 2 (rapidez + histórico) — `git log --oneline` mostra o hash
 - rodada 3 (rolagem) — `4df6333` no projeto e `dd9e27b` no espelho
 - rodada 4 (busca no histórico + exportar em `.md`/`.html`) — `git log --oneline` mostra o hash
+- rodada 5 (testar as IAs + cronômetros) — `git log --oneline` mostra o hash
 
 Cada pasta tem o próprio repositório Git: a pasta de trabalho (esta) e o espelho em
 `C:\Users\aceli\OneDrive\Documentos\Projeto Padrão`. As duas ficam com o mesmo conteúdo.
@@ -163,3 +207,7 @@ Cada pasta tem o próprio repositório Git: a pasta de trabalho (esta) e o espel
   ainda pode chamar um CLI quebrado (e então ele fica etiquetado e fora da seleção).
 - Os arquivos exportados caem na pasta de downloads do navegador, com o nome
   `mesa-<assunto>.<md|html>`; nenhum arquivo é criado na pasta do projeto.
+- O tempo de cada IA **não** vai para o histórico: abrir uma conversa antiga não mostra o
+  rodapé de confiança (os cronômetros valem para a rodada que acabou de acontecer).
+- O resultado do teste também é temporário: fecha com `×`, "Nova conversa" ou recarregando a
+  página. Quem guarda a informação para valer são as etiquetas na lista de IAs.

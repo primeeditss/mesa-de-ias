@@ -18,6 +18,7 @@ const state = {
   conversations: [],
   historyTotal: 0,
   search: "",
+  health: {id: null, status: "idle", providers: [], results: {}, error: "", open: false},
   busy: false,
   providersRendered: false,
 };
@@ -42,7 +43,10 @@ const historyList = document.querySelector("#historyList");
 const historyCount = document.querySelector("#historyCount");
 const historySearch = document.querySelector("#historySearch");
 const historySearchClear = document.querySelector("#historySearchClear");
-
+const healthPanel = document.querySelector("#healthPanel");
+const healthRun = document.querySelector("#healthRun");
+const healthRunTitle = document.querySelector("#healthRunTitle");
+const healthRunNote = document.querySelector("#healthRunNote");
 function providerStateKind(provider) {
   if (/pausad/i.test(provider.state || "")) return "paused";
   if (!provider.installed) return "missing";
@@ -307,7 +311,7 @@ function setStatus(text, detail = "", progress = {}, output = {}, started = Date
   if (followOutput) conversation.scrollTop = conversation.scrollHeight;
 }
 
-function addAnswer(text, provider, notes = []) {
+function addAnswer(text, provider, notes = [], trust = null) {
   document.querySelector("#activeStatus")?.remove();
   const card = document.createElement("article");
   card.className = "message answer-card";
@@ -317,7 +321,8 @@ function addAnswer(text, provider, notes = []) {
   mark.className = "brand-mark";
   mark.textContent = "✳";
   const label = document.createElement("span");
-  label.textContent = `RESPOSTA CONSOLIDADA · ${providerNames[provider] || provider}`;
+  const synthesisTime = trust && trust.synthSeconds ? ` · ${formatSeconds(trust.synthSeconds)}` : "";
+  label.textContent = `RESPOSTA CONSOLIDADA · ${providerNames[provider] || provider}${synthesisTime}`;
   heading.append(mark, label);
   const body = document.createElement("div");
   body.className = "answer-text";
@@ -345,6 +350,7 @@ function addAnswer(text, provider, notes = []) {
     details.append(list);
     card.append(details);
   }
+  renderTrust(card, trust);
   messages.append(card);
   conversation.scrollTop = conversation.scrollHeight;
 }
@@ -495,7 +501,11 @@ form.addEventListener("submit", async event => {
       modeSelect.value,
     );
     const job = await waitForJob(created.id);
-    addAnswer(job.final, job.final_provider, job.notes || []);
+    addAnswer(job.final, job.final_provider, job.notes || [], {
+      seconds: job.provider_seconds || {},
+      failures: job.provider_failures || {},
+      synthSeconds: job.synth_seconds || 0,
+    });
     state.turns.push({role: "assistant", text: job.final, provider: job.final_provider, notes: job.notes || []});
     if (job.unavailable && Object.keys(job.unavailable).length) {
       const missed = Object.entries(job.unavailable).map(([name, reason]) => `${name}: ${reason}`).join("\n");
@@ -928,12 +938,262 @@ async function refreshProviders(options = {}) {
   }
 }
 
+// ------------------- Painel de confiança (testar as minhas IAs) -------------------
+// O teste faz uma pergunta mínima a cada IA detectada, todas ao mesmo tempo, e
+// mostra quem respondeu, em quanto tempo e por que falhou. Nunca roda sozinho:
+// cada teste gasta cota, então quem decide é a pessoa, no botão.
+const HEALTH_POLL_MS = 700;
+const HEALTH_LIMIT_MS = 120000;
+
+function formatSeconds(value) {
+  const seconds = Math.max(0, Number(value) || 0);
+  return `${seconds.toFixed(1).replace(".", ",")} s`;
+}
+
+// Mesma ordem da barra lateral, para o painel não parecer outra lista qualquer.
+function healthOrder(ids) {
+  const main = mesaPrincipalIds.filter(id => ids.includes(id));
+  return [...main, ...ids.filter(id => !main.includes(id))];
+}
+
+function healthHasResults() {
+  return Object.keys(state.health.results).length > 0 || Boolean(state.health.error);
+}
+
+function healthRow(id, result) {
+  const row = document.createElement("div");
+  row.className = "health-item" + (result ? (result.ok ? " is-ok" : " is-off") : " is-waiting");
+  const dot = document.createElement("i");
+  dot.className = "health-dot";
+  dot.setAttribute("aria-hidden", "true");
+  dot.textContent = result ? (result.ok ? "✓" : "✕") : "○";
+  const copy = document.createElement("div");
+  copy.className = "health-copy";
+  const top = document.createElement("div");
+  top.className = "health-item-top";
+  const name = document.createElement("span");
+  name.className = "health-name";
+  name.textContent = providerNames[id] || id;
+  const time = document.createElement("span");
+  time.className = "health-time";
+  time.textContent = result ? formatSeconds(result.seconds) : "…";
+  top.append(name, time);
+  const note = document.createElement("small");
+  note.className = "health-note";
+  if (!result) {
+    note.textContent = "Aguardando resposta…";
+  } else if (result.ok) {
+    note.textContent = result.sample ? `Respondeu: ${result.sample}` : "Respondeu normalmente";
+  } else {
+    note.textContent = `${result.reason} · ${String(result.detail || "").slice(0, 170)}`;
+  }
+  copy.append(top, note);
+  row.append(dot, copy);
+  return row;
+}
+
+// O resultado vira um cartão na área da conversa: ali cabe a lista inteira sem
+// espremer a barra lateral (que segue mostrando a etiqueta de cada IA).
+function renderHealthCard() {
+  const existente = document.querySelector("#healthCard");
+  if (!state.health.open || !healthHasResults()) {
+    if (existente) existente.remove();
+    return;
+  }
+  const {status, providers, results, error} = state.health;
+  const ids = healthOrder(providers);
+  const respondendo = Object.values(results).filter(item => item.ok).length;
+  let card = existente;
+  if (!card) {
+    card = document.createElement("article");
+    card.className = "message health-card";
+    card.id = "healthCard";
+    messages.append(card);
+  }
+  const head = document.createElement("div");
+  head.className = "health-card-head";
+  const title = document.createElement("span");
+  title.className = "health-card-title";
+  title.textContent = status === "running" ? "Testando as minhas IAs" : "Teste das minhas IAs";
+  const hint = document.createElement("span");
+  hint.className = "health-card-hint";
+  hint.textContent = status === "running"
+    ? (ids.length ? `${Object.keys(results).length} de ${ids.length}` : "Chamando cada IA")
+    : `${respondendo} de ${ids.length} respondendo`;
+  const close = document.createElement("button");
+  close.type = "button";
+  close.className = "health-card-close";
+  close.setAttribute("aria-label", "Fechar o resultado do teste");
+  close.textContent = "×";
+  close.addEventListener("click", () => {
+    state.health.open = false;
+    renderHealth();
+  });
+  head.append(title, hint, close);
+  const list = document.createElement("div");
+  list.className = "health-card-list";
+  if (error) {
+    const alerta = document.createElement("p");
+    alerta.className = "health-alert";
+    alerta.textContent = error;
+    list.append(alerta);
+  }
+  for (const id of ids) list.append(healthRow(id, results[id]));
+  const foot = document.createElement("div");
+  foot.className = "health-card-foot";
+  const again = document.createElement("button");
+  again.type = "button";
+  again.className = "health-card-again";
+  again.textContent = status === "running" ? "Testando…" : "Testar de novo";
+  again.disabled = status === "running";
+  again.addEventListener("click", runHealthCheck);
+  const explica = document.createElement("small");
+  explica.textContent = "Quem falha aqui também fica etiquetado na sua lista de IAs.";
+  foot.append(again, explica);
+  card.replaceChildren(head, list, foot);
+  if (!existente) {
+    // Ao abrir o cartão, mostre o começo dele (título e primeiras IAs) em vez do
+    // fim: durante o teste as linhas seguintes aparecem sozinhas embaixo.
+    const topo = card.getBoundingClientRect().top - conversation.getBoundingClientRect().top + conversation.scrollTop;
+    moverConversa(topo - 16);
+  }
+}
+
+function renderHealth() {
+  if (!healthPanel || !healthRun) return;
+  const {status, providers, results} = state.health;
+  const respondendo = Object.values(results).filter(item => item.ok).length;
+  const tem = healthHasResults();
+  const total = providers.length;
+  healthPanel.dataset.status = status;
+  healthRun.disabled = status === "running";
+  if (status === "running") {
+    healthRunTitle.textContent = "Testando…";
+    healthRunNote.textContent = total
+      ? `${Object.keys(results).length} de ${total} responderam · o resultado abre na conversa`
+      : "Chamando cada IA detectada";
+  } else if (tem) {
+    const contagem = total ? `${respondendo} de ${total} respondendo` : "Nenhuma IA respondeu";
+    healthRunTitle.textContent = state.health.open ? "Testar de novo" : "Ver resultado do teste";
+    healthRunNote.textContent = state.health.open ? contagem : `${contagem} · a lista está na conversa`;
+  } else {
+    healthRunTitle.textContent = "Testar minhas IAs";
+    healthRunNote.textContent = "Uma pergunta mínima para cada IA detectada";
+  }
+  renderHealthCard();
+}
+
+async function followHealthCheck(id) {
+  const started = Date.now();
+  while (Date.now() - started < HEALTH_LIMIT_MS) {
+    const response = await fetch(`/api/testar/${encodeURIComponent(id)}`, {cache: "no-store"});
+    const check = await lerJson(response);
+    if (!response.ok) throw new Error(check.error || "O teste se perdeu no caminho");
+    state.health.providers = check.providers || state.health.providers;
+    state.health.results = check.results || {};
+    state.health.status = check.status === "done" ? "done" : "running";
+    renderHealth();
+    if (state.health.status === "done") return;
+    await new Promise(resolve => window.setTimeout(resolve, HEALTH_POLL_MS));
+  }
+  state.health.status = "done";
+  renderHealth();
+}
+
+// O servidor pode estar aberto desde antes desta atualização: nesse caso a rota
+// do teste ainda não existe e a resposta não é JSON. Sem isso, a pessoa veria
+// um erro de programação em vez de "reinicie o servidor".
+async function lerJson(response) {
+  try {
+    return await response.json();
+  } catch {
+    return {};
+  }
+}
+
+async function runHealthCheck() {
+  if (state.health.status === "running") return;
+  state.health = {id: null, status: "running", providers: [], results: {}, error: "", open: true};
+  renderHealth();
+  try {
+    const response = await fetch("/api/testar", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: "{}",
+    });
+    const started = await lerJson(response);
+    if (!response.ok) {
+      throw new Error(started.error || "Não consegui iniciar o teste. Se o servidor já estava aberto antes desta atualização, reinicie-o.");
+    }
+    state.health.id = started.id;
+    state.health.providers = started.providers || [];
+    renderHealth();
+  } catch (error) {
+    state.health.status = "error";
+    state.health.error = error.message || "Não consegui testar as IAs agora";
+    renderHealth();
+    return;
+  }
+  try {
+    await followHealthCheck(state.health.id);
+  } catch (error) {
+    state.health.status = "error";
+    state.health.error = error.message || "O teste não pôde terminar";
+    renderHealth();
+  }
+  // O teste alimenta a mesma memória de falhas da rodada: a barra lateral passa
+  // a mostrar a etiqueta certa (sem login, sem saldo, limite atingido).
+  await refreshProviders();
+}
+
+// Rodapé de confiança da resposta final: quem respondeu, em quanto tempo, e quem
+// ficou de fora. É o cronômetro que fica salvo na conversa desta tela.
+function renderTrust(card, trust) {
+  const seconds = (trust && trust.seconds) || {};
+  const failures = (trust && trust.failures) || {};
+  const ids = healthOrder(Object.keys(seconds));
+  if (!ids.length) return;
+  const box = document.createElement("div");
+  box.className = "answer-trust";
+  const title = document.createElement("span");
+  title.className = "answer-trust-title";
+  title.textContent = "Painel de confiança desta rodada";
+  const list = document.createElement("div");
+  list.className = "answer-trust-list";
+  for (const id of ids) {
+    const item = document.createElement("span");
+    const failed = failures[id];
+    item.className = "answer-trust-item" + (failed ? " is-off" : " is-ok");
+    const name = document.createElement("b");
+    name.textContent = providerNames[id] || id;
+    const value = document.createElement("span");
+    value.textContent = failed ? `falhou · ${failed}` : formatSeconds(seconds[id]);
+    item.append(name, value);
+    list.append(item);
+  }
+  box.append(title, list);
+  card.append(box);
+}
+
 async function initialize() {
   if (!await refreshProviders({keepSelection: false})) {
     providerList.textContent = "Não foi possível conectar ao servidor local.";
   }
   loadHistory();
   iniciarControleDeScroll();
+}
+
+if (healthRun) {
+  // Se o resultado já existe, o botão só reabre a lista (sem gastar cota de
+  // novo). Testar outra vez é uma decisão explícita, dentro do cartão.
+  healthRun.addEventListener("click", () => {
+    if (healthHasResults() && !state.health.open) {
+      state.health.open = true;
+      renderHealth();
+      return;
+    }
+    runHealthCheck();
+  });
 }
 
 // Busca no histórico: espera a pessoa parar de digitar antes de perguntar ao

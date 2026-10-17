@@ -223,7 +223,7 @@ body:before{display:none}.topbar{backdrop-filter:none;background:rgba(24,23,18,.
 .provider-option.is-failed .provider-state{color:#e0b183}
 
 /* Histórico de conversas, logo abaixo da lista de provedores. */
-.history{flex:0 0 auto;min-height:0;display:flex;flex-direction:column;gap:8px;max-height:26vh;margin:20px -4px 0;padding:16px 4px 0;border-top:1px solid #3c392f}
+.history{flex:0 0 auto;min-height:0;display:flex;flex-direction:column;gap:8px;max-height:22vh;margin:20px -4px 0;padding:16px 4px 0;border-top:1px solid #3c392f}
 .history[hidden]{display:none}
 .history-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;padding:0 11px}
 .history-title{font:600 9.5px 'DM Mono',monospace;letter-spacing:1.1px;text-transform:uppercase;color:#cfc4ae}
@@ -267,6 +267,63 @@ body:before{display:none}.topbar{backdrop-filter:none;background:rgba(24,23,18,.
 .history-export-copy b{font-size:12px;font-weight:600;color:#f2ead9}
 .history-export-copy small{font-size:10px;line-height:1.4;color:#9d9481}
 .history-empty{margin:6px 11px 2px;font-size:11px;line-height:1.5;color:#9d9481}
+
+/* ===== Opção B · Painel de confiança =====
+   O botão pergunta "OK" para cada IA detectada; o resultado abre como um cartão
+   na área da conversa (espaço de sobra, e a barra lateral segue mostrando a
+   etiqueta de cada IA). Verde para quem responde, âmbar para quem está fora.  */
+.health{flex:0 0 auto;margin:16px -4px 0;padding:12px 4px 0;border-top:1px solid #3c392f}
+.health-run{display:flex;align-items:center;gap:10px;width:calc(100% - 14px);margin:0 7px;padding:8px 11px;border:1px solid rgba(150,132,95,.32);border-radius:11px;background:linear-gradient(120deg,rgba(221,194,139,.1),rgba(221,194,139,.03));color:#efe6d5;font:inherit;cursor:pointer;text-align:left;transition:border-color .3s ease,background .3s ease,transform .3s ease}
+.health-run:hover{border-color:rgba(221,194,139,.5);background:linear-gradient(120deg,rgba(221,194,139,.17),rgba(221,194,139,.05))}
+.health-run:active{transform:translateY(1px) scale(.99)}
+.health-run:disabled{cursor:progress;opacity:.88}
+.health-run-spark{flex:none;width:26px;height:26px;display:grid;place-items:center;border-radius:9px;background:rgba(221,194,139,.15);color:#e3c78f;font-size:14px;line-height:1}
+.health-run-copy{display:flex;flex-direction:column;gap:2px;min-width:0}
+.health-run-copy b{font-size:12.5px;font-weight:600;color:#f2ead9}
+.health-run-copy small{font-size:10px;line-height:1.4;color:#9d9481}
+.health[data-status="running"] .health-run-spark{animation:dot-breathe 1.6s ease-in-out infinite}
+
+/* O cartão do resultado, dentro da conversa. */
+.health-card{padding:16px 18px;border:1px solid rgba(150,132,95,.3);border-radius:16px;background:linear-gradient(160deg,rgba(43,41,32,.9),rgba(29,28,22,.94));box-shadow:0 18px 40px rgba(0,0,0,.28)}
+.health-card-head{display:flex;align-items:baseline;gap:10px;margin-bottom:12px}
+.health-card-title{flex:1 1 auto;font:600 10px 'DM Mono',monospace;letter-spacing:1.3px;text-transform:uppercase;color:#e3c78f}
+.health-card-hint{font:10px 'DM Mono',monospace;color:#9d9481}
+.health-card-close{flex:none;width:22px;height:22px;border:0;border-radius:50%;background:transparent;color:#8d8574;font:14px/1 'DM Sans',sans-serif;cursor:pointer;transition:background .3s ease,color .3s ease}
+.health-card-close:hover{background:rgba(221,194,139,.16);color:#fff1d5}
+.health-card-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:6px}
+.health-item{display:flex;align-items:flex-start;gap:9px;padding:9px 11px;border:1px solid rgba(150,132,95,.18);border-radius:12px;background:rgba(20,19,15,.4)}
+.health-item.is-waiting{opacity:.7}
+.health-item.is-ok .health-dot{background:#30412e;color:#b0d89a}
+.health-item.is-off .health-dot{background:#452f27;color:#e9a58e}
+.health-dot{flex:none;width:19px;height:19px;margin-top:1px;display:grid;place-items:center;border-radius:50%;background:rgba(221,194,139,.14);color:#cfc4ae;font:600 10px 'DM Mono',monospace}
+.health-copy{display:flex;flex-direction:column;gap:3px;min-width:0;flex:1 1 auto}
+.health-item-top{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+.health-name{font-size:12.5px;font-weight:600;color:#efe6d5}
+.health-time{font:10px 'DM Mono',monospace;color:#9d9481;white-space:nowrap}
+.health-item.is-off .health-time{color:#d99a6a}
+.health-note{font-size:10.5px;line-height:1.45;color:#9d9481;word-break:break-word}
+.health-item.is-ok .health-note{color:#a8b79b}
+.health-alert{margin:0 0 10px;font-size:11px;line-height:1.5;color:#e9a58e}
+.health-card-foot{display:flex;align-items:center;gap:12px;margin-top:13px;padding-top:12px;border-top:1px solid rgba(150,132,95,.2)}
+.health-card-again{flex:none;padding:7px 14px;border:1px solid rgba(221,194,139,.36);border-radius:99px;background:rgba(221,194,139,.12);color:#f2ead9;font:600 11.5px 'DM Sans',sans-serif;cursor:pointer;transition:background .3s ease,border-color .3s ease}
+.health-card-again:hover{border-color:rgba(221,194,139,.6);background:rgba(221,194,139,.2)}
+.health-card-again:disabled{cursor:progress;opacity:.8}
+.health-card-foot small{font-size:10px;line-height:1.45;color:#8d8574}
+
+/* Cronômetro que fica na resposta final: quem respondeu, quanto tempo levou e
+   quem ficou de fora — o "Painel de confiança" resumido da rodada.            */
+.answer-trust{display:flex;flex-wrap:wrap;align-items:center;gap:7px;margin-top:14px;padding-top:12px;border-top:1px solid rgba(150,132,95,.22)}
+.answer-trust-title{font:600 9px 'DM Mono',monospace;letter-spacing:1.1px;text-transform:uppercase;color:#8d8574}
+.answer-trust-list{display:flex;flex-wrap:wrap;gap:6px}
+.answer-trust-item{display:inline-flex;align-items:baseline;gap:6px;padding:4px 9px;border:1px solid rgba(150,132,95,.26);border-radius:99px;background:rgba(20,19,15,.4);font:10px 'DM Mono',monospace;color:#a8a08d}
+.answer-trust-item b{font:600 10.5px 'DM Sans',sans-serif;color:#e6dcc8}
+.answer-trust-item.is-ok span{color:#a8c79a}
+.answer-trust-item.is-off span{color:#d99a6a}
+
+@media(prefers-reduced-motion:reduce){
+  .health-run,.health-run:active{transition:none;transform:none}
+  .health[data-status="running"] .health-run-spark{animation:none!important}
+}
 
 /* ===== Item 7 · controle de rolagem do chat =====
    A barra nativa fica escondida apenas na conversa: o controle flutuante mostra

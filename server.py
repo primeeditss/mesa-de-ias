@@ -86,18 +86,37 @@ provider_error_lock = threading.Lock()
 
 
 def short_failure_reason(detail: str) -> str:
-    """Traduz o erro cru de um provedor numa etiqueta curta e legível."""
+    """Traduz o erro cru de um provedor numa etiqueta curta e legível.
+
+    A ordem importa: um erro pode citar dinheiro e limite ao mesmo tempo (a cota
+    do Gemini, por exemplo, fala em "billing"), e o limite é o motivo mais útil.
+    """
     text = (detail or "").lower()
     if any(mark in text for mark in (
         "not logged in", "/login", "authentication required", "agent login",
-        "unauthorized", "401", "invalid api key", "api key not valid",
+        "unauthorized", "401", "invalid api key", "api key not valid", "no auth type",
     )):
         return "sem login"
-    if any(mark in text for mark in ("insufficient", "balance", "quota", "credit", "402", "429")):
+    if any(mark in text for mark in (
+        "usage limit", "quota", "429", "rate limit", "exceeded", "try again at",
+        "limite de uso",
+    )):
+        return "limite atingido"
+    if any(mark in text for mark in (
+        "insufficient", "balance", "credit", "payment required", "402", "billing",
+    )):
         return "sem saldo"
-    if any(mark in text for mark in ("recusou", "connection", "timed out", "timeout", "refused")):
+    if any(mark in text for mark in (
+        "recusou", "connection", "timed out", "timeout", "refused", "offline",
+        "unreachable", "demorou",
+    )):
         return "sem conexão"
     return "falhou agora"
+
+
+def format_seconds(value: float) -> str:
+    """3.4 -> '3,4 s' — ponto decimal não é o costume em português."""
+    return f"{value:.1f}".replace(".", ",") + " s"
 
 
 def command_prefix(provider_id: str) -> list[str] | None:
@@ -634,21 +653,43 @@ def update_provider_output(job_id: str, provider: str, chunk: str) -> None:
         job["updated"] = time.time()
 
 
+def update_provider_seconds(job_id: str, provider: str, seconds: float) -> None:
+    """Guarda quanto tempo cada IA levou — é o cronômetro do Painel de Confiança."""
+    with jobs_lock:
+        job = jobs.get(job_id)
+        if job is None:
+            return
+        job.setdefault("provider_seconds", {})[provider] = round(float(seconds), 1)
+        job["updated"] = time.time()
+
+
 def run_parallel(
     providers: list[str],
     prompts: dict[str, str],
     on_progress: Callable[[str, str], None] | None = None,
     on_output: Callable[[str, str], None] | None = None,
+    on_seconds: Callable[[str, float], None] | None = None,
     progress_label: str = "Respondendo",
-) -> tuple[dict[str, str], dict[str, str]]:
+) -> tuple[dict[str, str], dict[str, str], dict[str, float]]:
+    """Pergunta a todas as IAs ao mesmo tempo: respostas, erros e tempos."""
     results: dict[str, str] = {}
     errors: dict[str, str] = {}
+    seconds: dict[str, float] = {}
     result_lock = threading.Lock()
     workers = []
+
+    def clock(provider: str, started: float) -> float:
+        spent = round(time.time() - started, 1)
+        with result_lock:
+            seconds[provider] = spent
+        if on_seconds:
+            on_seconds(provider, spent)
+        return spent
 
     def worker(provider: str) -> None:
         if on_progress:
             on_progress(provider, progress_label)
+        started = time.time()
         try:
             answer = run_provider(
                 provider,
@@ -659,15 +700,17 @@ def run_parallel(
                 results[provider] = answer
             with provider_error_lock:
                 provider_last_error.pop(provider, None)
+            spent = clock(provider, started)
             if on_progress:
-                on_progress(provider, "Concluída")
+                on_progress(provider, f"Concluída em {format_seconds(spent)}")
         except Exception as exc:
             with result_lock:
                 errors[provider] = str(exc)
             with provider_error_lock:
                 provider_last_error[provider] = str(exc)
+            spent = clock(provider, started)
             if on_progress:
-                on_progress(provider, "Não respondeu")
+                on_progress(provider, f"Não respondeu em {format_seconds(spent)}")
 
     for provider in providers:
         thread = threading.Thread(target=worker, args=(provider,), daemon=True)
@@ -675,7 +718,7 @@ def run_parallel(
         workers.append(thread)
     for thread in workers:
         thread.join(TIMEOUT_SECONDS + 10)
-    return results, errors
+    return results, errors, seconds
 
 
 def orchestrate(job_id: str, message: str, history: list[dict[str, str]],
@@ -697,11 +740,12 @@ def orchestrate(job_id: str, message: str, history: list[dict[str, str]],
             provider: build_prompt(provider, "first", message, history, {})
             for provider in selected
         }
-        first, first_errors = run_parallel(
+        first, first_errors, first_seconds = run_parallel(
             selected,
             initial_prompts,
             on_progress=lambda provider, state: update_provider_progress(job_id, provider, state),
             on_output=lambda provider, chunk: update_provider_output(job_id, provider, chunk),
+            on_seconds=lambda provider, seconds: update_provider_seconds(job_id, provider, seconds),
         )
         if len(first) < 2:
             raise RuntimeError(
@@ -724,7 +768,7 @@ def orchestrate(job_id: str, message: str, history: list[dict[str, str]],
                 provider: build_prompt(provider, "review", message, history, first)
                 for provider in first
             }
-            reviews, review_errors = run_parallel(
+            reviews, review_errors, _ = run_parallel(
                 list(first),
                 review_prompts,
                 on_progress=lambda provider, state: update_provider_progress(job_id, provider, state),
@@ -778,6 +822,7 @@ def orchestrate(job_id: str, message: str, history: list[dict[str, str]],
                 for p, text in synthesis_source.items()
             )
         )
+        synthesis_started = time.time()
         try:
             final = run_provider(
                 synthesizer,
@@ -800,6 +845,7 @@ def orchestrate(job_id: str, message: str, history: list[dict[str, str]],
             final_provider = fallback
             update_provider_progress(job_id, fallback, "Resposta final pronta")
             review_errors["síntese"] = f"{PROVIDERS[synthesizer]['label']} falhou: {exc}"
+        synth_seconds = round(time.time() - synthesis_started, 1)
 
         publish(
             job_id,
@@ -807,6 +853,9 @@ def orchestrate(job_id: str, message: str, history: list[dict[str, str]],
             phase="Concluído",
             final=final,
             final_provider=final_provider,
+            provider_seconds=first_seconds,
+            provider_failures={p: short_failure_reason(e) for p, e in first_errors.items()},
+            synth_seconds=synth_seconds,
             participants=[PROVIDERS[p]["label"] for p in selected],
             unavailable={PROVIDERS[p]["label"]: e for p, e in first_errors.items()},
             notes=[
@@ -817,6 +866,117 @@ def orchestrate(job_id: str, message: str, history: list[dict[str, str]],
         )
     except Exception as exc:
         publish(job_id, status="error", phase="Falhou", error=str(exc))
+
+
+# -------------------- Teste das IAs (Painel de Confiança) --------------------
+# Uma pergunta mínima para cada IA, todas ao mesmo tempo, para saber quem está
+# respondendo agora e em quanto tempo. O teste também atualiza a memória de
+# falhas (quem falhou fica etiquetado, quem voltou sai da etiqueta), mas não
+# toca no histórico nem no conteúdo das conversas.
+
+TEST_PROMPT = "Responda apenas: OK"
+TEST_TIMEOUT_SECONDS = 60
+MAX_CHECKS = 12
+
+checks: dict[str, dict[str, Any]] = {}
+checks_lock = threading.Lock()
+
+
+def strip_ansi(text: str) -> str:
+    """Tira os códigos de cor que alguns CLIs jogam no meio do erro."""
+    return re.sub(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])", "", text or "")
+
+
+def clean_detail(detail: str, limit: int = 300) -> str:
+    return " ".join(strip_ansi(detail).split())[:limit]
+
+
+def publish_check(check_id: str, **changes: Any) -> None:
+    with checks_lock:
+        check = checks.get(check_id)
+        if check is None:
+            return
+        check.update(changes)
+        check["updated"] = time.time()
+
+
+def probe_provider(provider: str) -> dict[str, Any]:
+    """Uma pergunta trivial: devolve o tempo, a resposta e o motivo do fracasso."""
+    started = time.time()
+    try:
+        text = run_provider(provider, TEST_PROMPT)
+    except Exception as exc:
+        detail = str(exc)
+        with provider_error_lock:
+            provider_last_error[provider] = detail
+        return {
+            "ok": False,
+            "seconds": round(time.time() - started, 1),
+            "reason": short_failure_reason(detail),
+            "detail": clean_detail(detail),
+        }
+    with provider_error_lock:
+        provider_last_error.pop(provider, None)
+    return {
+        "ok": True,
+        "seconds": round(time.time() - started, 1),
+        "sample": clean_detail(text, 90),
+    }
+
+
+def run_check(check_id: str, providers: list[str]) -> None:
+    results: dict[str, dict[str, Any]] = {}
+    results_lock = threading.Lock()
+
+    def worker(provider: str) -> None:
+        outcome = probe_provider(provider)
+        with results_lock:
+            results[provider] = outcome
+            snapshot = dict(results)
+        publish_check(check_id, results=snapshot)
+
+    threads = [threading.Thread(target=worker, args=(provider,), daemon=True) for provider in providers]
+    for thread in threads:
+        thread.start()
+    deadline = time.time() + TEST_TIMEOUT_SECONDS
+    for thread in threads:
+        thread.join(max(0.1, deadline - time.time()))
+    with results_lock:
+        # Quem não voltou dentro do prazo aparece como "demorou demais" — e, se
+        # responder depois, o próprio worker corrige o painel.
+        for provider in providers:
+            if provider not in results:
+                results[provider] = {
+                    "ok": False,
+                    "seconds": TEST_TIMEOUT_SECONDS,
+                    "reason": "demorou demais",
+                    "detail": f"Sem resposta em {TEST_TIMEOUT_SECONDS} s; a IA pode estar presa numa fila.",
+                }
+        snapshot = dict(results)
+    publish_check(check_id, results=snapshot, status="done", finished=time.time())
+
+
+def start_check(providers: list[str]) -> dict[str, Any]:
+    check_id = uuid.uuid4().hex
+    with checks_lock:
+        if len(checks) >= MAX_CHECKS:
+            oldest = sorted(checks, key=lambda item: checks[item].get("updated", 0))
+            for stale in oldest[: len(checks) - MAX_CHECKS + 1]:
+                checks.pop(stale, None)
+        checks[check_id] = {
+            "id": check_id,
+            "status": "running",
+            "providers": providers,
+            "results": {},
+            "created": time.time(),
+            "updated": time.time(),
+        }
+    threading.Thread(target=run_check, args=(check_id, providers), daemon=True).start()
+    return {"id": check_id, "status": "running", "providers": providers}
+
+
+def installed_provider_ids() -> list[str]:
+    return [item["id"] for item in provider_status() if item["installed"]]
 
 
 # ------------------------------- Histórico -------------------------------
@@ -1255,6 +1415,15 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self.send_json(200, found)
             return
+        if parsed.path.startswith("/api/testar/"):
+            check_id = unquote(parsed.path.removeprefix("/api/testar/"))
+            with checks_lock:
+                check = checks.get(check_id)
+            if not check:
+                self.send_json(404, {"error": "Teste não encontrado (ele é temporário)"})
+                return
+            self.send_json(200, check)
+            return
         if parsed.path.startswith("/api/jobs/"):
             job_id = unquote(parsed.path.removeprefix("/api/jobs/"))
             with jobs_lock:
@@ -1323,6 +1492,28 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(400, {"error": f"Pedido inválido: {exc}"})
             except OSError as exc:
                 self.send_json(500, {"error": f"Não consegui gravar o histórico: {exc}"})
+            return
+        if path == "/api/testar":
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                if length > 100_000:
+                    self.send_json(413, {"error": "Pedido muito grande"})
+                    return
+                data = json.loads(self.rfile.read(length)) if length else {}
+                if not isinstance(data, dict):
+                    self.send_json(400, {"error": "Pedido inválido"})
+                    return
+                requested = data.get("providers")
+                if isinstance(requested, list) and requested:
+                    chosen = [str(item) for item in requested if str(item) in PROVIDERS]
+                else:
+                    chosen = installed_provider_ids()
+                if not chosen:
+                    self.send_json(400, {"error": "Nenhuma IA instalada para testar. Instale ou ligue pelo menos uma."})
+                    return
+                self.send_json(202, start_check(chosen))
+            except (ValueError, TypeError, json.JSONDecodeError) as exc:
+                self.send_json(400, {"error": f"Pedido inválido: {exc}"})
             return
         if path != "/api/chat":
             self.send_error(404)
