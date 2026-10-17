@@ -42,6 +42,36 @@ GEMINI_MODEL = os.environ.get("MESA_GEMINI_MODEL", "gemini-3.8-flash")
 OLLAMA_MODEL = os.environ.get("MESA_OLLAMA_MODEL", "qwen3.5:4b")
 OLLAMA_KEEP_ALIVE = os.environ.get("MESA_OLLAMA_KEEP_ALIVE", "30m")
 
+# OpenRouter é usado por duas opções da mesa: o roteador de modelos grátis
+# (`openrouter`) e o especialista em código (`coder`), que aponta para um modelo
+# escolhido a dedo — assim ele revisa CSS/JS/Python sempre com o mesmo modelo, em
+# vez de sortear um a cada chamada. Trocar o modelo é mexer só em MESA_CODE_MODEL
+# (variável de ambiente), sem tocar em código.
+OPENROUTER_MODEL = os.environ.get("MESA_OPENROUTER_MODEL", "openrouter/free")
+CODE_MODEL = os.environ.get("MESA_CODE_MODEL", "nvidia/nemotron-3-super-120b-a12b:free")
+
+# Nomes curtos para a barra lateral (o id técnico do modelo não cabe na linha).
+MODEL_SHORT_NAMES = {
+    "nvidia/nemotron-3-super-120b-a12b:free": "Nemotron 3 Super",
+    "poolside/laguna-s-2.1:free": "Laguna S 2.1",
+    "poolside/laguna-xs-2.1:free": "Laguna XS 2.1",
+    "cohere/north-mini-code:free": "Cohere North Mini Code",
+    "nvidia/nemotron-3-ultra-550b-a55b:free": "Nemotron 3 Ultra",
+    "deepseek/deepseek-v4.1-flash": "DeepSeek V4.1 Flash",
+    "deepseek/deepseek-chat-v3.1": "DeepSeek Chat 3.1",
+    "deepseek/deepseek-r1": "DeepSeek R1",
+}
+
+
+def code_model_short() -> str:
+    """Nome curto do modelo do especialista, para caber na barra lateral."""
+    return MODEL_SHORT_NAMES.get(CODE_MODEL, CODE_MODEL.split("/")[-1].replace(":free", ""))
+
+
+def code_model_detail() -> str:
+    """A linha embaixo do nome: o modelo e se ele é gratuito."""
+    return f"{code_model_short()} · {'grátis' if CODE_MODEL.endswith(':free') else 'pago'}"
+
 
 def ollama_base_url() -> str:
     """Resolve the local Ollama address, accepting host:port or a full URL."""
@@ -61,13 +91,19 @@ PROVIDERS = {
     "opencode": {"label": "OpenCode", "command": "opencode"},
     "gemini": {"label": "Gemini", "command": None},
     "openrouter": {"label": "OpenRouter · modelos grátis", "command": None},
+    "coder": {"label": "Especialista em Código", "command": None},
     "cursor": {"label": "Cursor Agent", "command": "cursor-agent"},
     "qwen": {"label": "Qwen Code", "command": "qwen"},
     "ollama": {"label": "Ollama local", "command": None},
 }
 
 # Providers the Mesa talks to directly over HTTP — no terminal is involved.
-DIRECT_API_PROVIDERS = ("gemini", "openrouter", "ollama")
+DIRECT_API_PROVIDERS = ("gemini", "openrouter", "coder", "ollama")
+
+# O especialista em código recebe um empurrão próprio no prompt: o que ele faz de
+# diferente é ler o código pela lógica, não pela aparência, e entregar a correção
+# pronta. Vale para qualquer modelo que estiver configurado em MESA_CODE_MODEL.
+CODE_PROVIDER = "coder"
 
 # Temporarily pause slow providers in the Mesa without uninstalling their CLIs:
 # add an entry here (e.g. "claude": "Pausado por enquanto") to hide it again.
@@ -178,6 +214,25 @@ def provider_status() -> list[dict[str, Any]]:
                 "state": "grátis · limite diário" if configured else "chave ausente",
                 "reason": "Modelos gratuitos variam em qualidade e disponibilidade; limite publicado de 50 chamadas por dia."
                 if configured else "Crie uma chave gratuita em openrouter.ai/keys e adicione OPENROUTER_API_KEY ao .env.",
+            })
+            continue
+        if key == "coder":
+            configured = bool(os.environ.get("OPENROUTER_API_KEY") or read_dotenv_value("OPENROUTER_API_KEY"))
+            result.append({
+                "id": key,
+                "label": provider["label"],
+                "installed": configured,
+                "command": f"OpenRouter API · {CODE_MODEL}",
+                "detail": code_model_detail(),
+                "state": "pronta" if configured else "chave ausente",
+                "reason": (
+                    f"Especialista em código da mesa: revisa lógica de CSS, JS, Python e afins com o "
+                    f"modelo {CODE_MODEL}, pelo OpenRouter, sem passar pelo terminal. "
+                    "Usa a mesma chave e o mesmo limite diário do OpenRouter."
+                    if configured else
+                    "Usa a mesma chave do OpenRouter: adicione OPENROUTER_API_KEY ao .env "
+                    "(chave gratuita em openrouter.ai/keys)."
+                ),
             })
             continue
         if key == "gemini":
@@ -302,6 +357,15 @@ def build_prompt(provider_id: str, phase: str, message: str,
         f"Histórico da conversa:\n{history_text}\n\n"
         f"Nova mensagem da pessoa:\n{message}\n\n"
     )
+    if provider_id == CODE_PROVIDER:
+        base += (
+            "Você é o especialista em código desta mesa. Leia o código pela lógica, não pela aparência: "
+            "confira o que ele realmente faz — ordem de aplicação, especificidade, precedência, contexto de "
+            "empilhamento, fluxo do script, estado no momento em que roda — antes de opinar. Se houver erro, "
+            "mostre o trecho exato, explique o efeito real dele e entregue a correção pronta para colar. "
+            "Se o código estiver certo, diga isso com franqueza em vez de inventar problema; "
+            "se faltar informação para concluir, diga exatamente o que falta.\n\n"
+        )
     if phase == "first":
         return base + (
             "Dê sua resposta inicial independente, útil e específica. Se o pedido for para criar algo, entregue "
@@ -490,13 +554,15 @@ def warm_ollama() -> None:
         pass
 
 
-def run_openrouter(prompt: str, on_output: Callable[[str], None] | None = None) -> str:
+def run_openrouter(prompt: str, on_output: Callable[[str], None] | None = None,
+                   model: str | None = None) -> str:
     key = os.environ.get("OPENROUTER_API_KEY") or read_dotenv_value("OPENROUTER_API_KEY")
     if not key:
         raise RuntimeError("Adicione OPENROUTER_API_KEY ao arquivo .env para usar esta opção")
+    model = model or OPENROUTER_MODEL
 
     payload = json.dumps({
-        "model": "openrouter/free",
+        "model": model,
         "messages": [{"role": "user", "content": prompt}],
         "stream": True,
     }).encode("utf-8")
@@ -541,19 +607,21 @@ def run_openrouter(prompt: str, on_output: Callable[[str], None] | None = None) 
             detail = body.get("error", {}).get("message", "")
         except Exception:
             detail = ""
-        raise RuntimeError(f"OpenRouter retornou HTTP {exc.code}: {detail or 'verifique a chave ou o limite diário'}") from exc
+        raise RuntimeError(f"OpenRouter ({model}) retornou HTTP {exc.code}: {detail or 'verifique a chave ou o limite diário'}") from exc
     except URLError as exc:
         raise RuntimeError("Não foi possível conectar ao OpenRouter; confira sua internet") from exc
 
     text = "".join(chunks).strip()
     if not text:
-        raise RuntimeError("OpenRouter respondeu sem texto; tente novamente")
+        raise RuntimeError(f"OpenRouter ({model}) respondeu sem texto; tente novamente")
     return text[-18000:]
 
 
 def run_provider(provider: str, prompt: str, on_output: Callable[[str], None] | None = None) -> str:
     if provider == "openrouter":
         return run_openrouter(prompt, on_output)
+    if provider == CODE_PROVIDER:
+        return run_openrouter(prompt, on_output, model=CODE_MODEL)
     if provider == "gemini":
         return run_gemini(prompt, on_output)
     if provider == "ollama":
@@ -752,15 +820,19 @@ def orchestrate(job_id: str, message: str, history: list[dict[str, str]],
             on_output=lambda provider, chunk: update_provider_output(job_id, provider, chunk),
             on_seconds=lambda provider, seconds: update_provider_seconds(job_id, provider, seconds),
         )
-        if len(first) < 2:
+        if not first:
             raise RuntimeError(
-                "Menos de duas IAs responderam. "
+                "Nenhuma IA respondeu nesta rodada. "
                 + "; ".join(f"{PROVIDERS[p]['label']}: {e}" for p, e in first_errors.items())
             )
 
         reviews: dict[str, str] = {}
         review_errors: dict[str, str] = {}
-        if mode == "complete":
+        # Uma contribuição só não tem o que revisar nem o que sintetizar: a resposta
+        # dela já é a resposta final. Assim a Mesa não gasta duas chamadas para
+        # reescrever o mesmo texto — é o caso de pedir só ao Especialista em Código.
+        single = len(first) == 1
+        if mode == "complete" and not single:
             publish(
                 job_id,
                 phase="Revisão cruzada",
@@ -798,6 +870,35 @@ def orchestrate(job_id: str, message: str, history: list[dict[str, str]],
                 synthesizer = substitute
 
         synthesis_source = reviews or first
+
+        def publish_end(final_text: str, final_provider_id: str, seconds: float) -> None:
+            """A entrega final da rodada — com ou sem síntese."""
+            publish(
+                job_id,
+                status="done",
+                phase="Concluído",
+                final=final_text,
+                final_provider=final_provider_id,
+                provider_seconds=first_seconds,
+                provider_failures={p: short_failure_reason(e) for p, e in first_errors.items()},
+                synth_seconds=seconds,
+                participants=[PROVIDERS[p]["label"] for p in selected],
+                unavailable={PROVIDERS[p]["label"]: e for p, e in first_errors.items()},
+                notes=[
+                    {"provider": PROVIDERS[p]["label"], "text": text[:MAX_NOTE_CHARS]}
+                    for p, text in synthesis_source.items()
+                ],
+                warnings=review_errors,
+            )
+
+        if single:
+            # Ninguém para revisar e ninguém para sintetizar: entrega a resposta
+            # como ela veio, sem gastar mais chamada nenhuma.
+            only = next(iter(first))
+            update_provider_progress(job_id, only, "Resposta final pronta")
+            publish_end(first[only], only, 0.0)
+            return
+
         publish(
             job_id,
             phase="Preparando resposta única",
@@ -811,6 +912,11 @@ def orchestrate(job_id: str, message: str, history: list[dict[str, str]],
             status="running",
         )
         update_provider_progress(job_id, synthesizer, "Preparando resposta final")
+        code_note = (
+            " Como o Especialista em Código participou da rodada, trate os trechos de código dele como a "
+            "referência de código: não troque por uma versão que você não conseguiu verificar."
+            if CODE_PROVIDER in synthesis_source else ""
+        )
         synth_prompt = (
             "Você é a pessoa responsável por entregar a resposta final única desta mesa. "
             "Considere a pergunta original e as respostas disponíveis. Resolva divergências, "
@@ -820,7 +926,8 @@ def orchestrate(job_id: str, message: str, history: list[dict[str, str]],
             "sem seções forçadas; conteúdo complexo com títulos claros; passos em ordem; comparações em tabela se útil; "
             "pedido criativo como um artefato pronto. Não mencione raciocínio privado nem invente consenso. Se houver "
             "incerteza real, diga isso brevemente. Se perguntarem sobre a Mesa, explique que ela reúne respostas das IAs "
-            "selecionadas e que esta versão conversa, mas ainda não edita arquivos do usuário.\n\n"
+            "selecionadas e que esta versão conversa, mas ainda não edita arquivos do usuário."
+            f"{code_note}\n\n"
             f"Pergunta: {message}\n\n"
             + "\n\n".join(
                 f"Resposta revisada de {PROVIDERS[p]['label']}:\n{text}"
@@ -851,24 +958,7 @@ def orchestrate(job_id: str, message: str, history: list[dict[str, str]],
             update_provider_progress(job_id, fallback, "Resposta final pronta")
             review_errors["síntese"] = f"{PROVIDERS[synthesizer]['label']} falhou: {exc}"
         synth_seconds = round(time.time() - synthesis_started, 1)
-
-        publish(
-            job_id,
-            status="done",
-            phase="Concluído",
-            final=final,
-            final_provider=final_provider,
-            provider_seconds=first_seconds,
-            provider_failures={p: short_failure_reason(e) for p, e in first_errors.items()},
-            synth_seconds=synth_seconds,
-            participants=[PROVIDERS[p]["label"] for p in selected],
-            unavailable={PROVIDERS[p]["label"]: e for p, e in first_errors.items()},
-            notes=[
-                {"provider": PROVIDERS[p]["label"], "text": text[:MAX_NOTE_CHARS]}
-                for p, text in synthesis_source.items()
-            ],
-            warnings=review_errors,
-        )
+        publish_end(final, final_provider, synth_seconds)
     except Exception as exc:
         publish(job_id, status="error", phase="Falhou", error=str(exc))
 
@@ -1556,8 +1646,8 @@ class Handler(BaseHTTPRequestHandler):
             if len(message) > 12_000:
                 self.send_json(400, {"error": "Limite de 12.000 caracteres por mensagem"})
                 return
-            if len(selected) < 2:
-                self.send_json(400, {"error": "Selecione pelo menos duas IAs instaladas"})
+            if not selected:
+                self.send_json(400, {"error": "Selecione pelo menos uma IA instalada"})
                 return
             if any(p not in PROVIDERS for p in selected):
                 self.send_json(400, {"error": "Uma IA selecionada não é reconhecida"})

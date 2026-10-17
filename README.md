@@ -10,7 +10,7 @@ O servidor escuta somente em `127.0.0.1`, não na rede. Ele usa a autenticação
 
 ## Conectores
 
-O app reconhece Claude Code (`claude`), Codex (`codex`), OpenCode (`opencode`), Gemini (API HTTP), OpenRouter (API HTTP), Cursor Agent (`cursor-agent`), Qwen Code (`qwen`) e Ollama (API HTTP local). No Windows, também reconhece scripts `.ps1`, `.cmd` e `.bat` instalados no PATH. `cursor` abre o editor e não substitui `cursor-agent`.
+O app reconhece Claude Code (`claude`), Codex (`codex`), OpenCode (`opencode`), Gemini (API HTTP), OpenRouter (API HTTP), **Especialista em Código** (API HTTP, pela chave do OpenRouter), Cursor Agent (`cursor-agent`), Qwen Code (`qwen`) e Ollama (API HTTP local). No Windows, também reconhece scripts `.ps1`, `.cmd` e `.bat` instalados no PATH. `cursor` abre o editor e não substitui `cursor-agent`.
 
 O Gemini é chamado pela **API HTTP** do Google AI Studio, sem passar pelo terminal — é isso que tirou a lentidão do CLI. Crie uma chave gratuita em [aistudio.google.com/apikey](https://aistudio.google.com/apikey) e coloque no `.env`. O servidor procura `GEMINI_API_KEY` no ambiente e, se não encontrar, lê somente essa variável de `C:\Users\<seu usuário>\MEUS PROJETOS\.env`. Para outro local, defina `MESA_ENV_FILE` antes de iniciar o servidor. Exemplo de linha no `.env`: `GEMINI_API_KEY=sua_chave_aqui`. Não compartilhe a chave; a Mesa a usa apenas nas chamadas ao serviço do Google. O modelo padrão é `gemini-3.8-flash` — o `gemini-2.5-flash` foi descontinuado pela própria API — e pode ser trocado com `MESA_GEMINI_MODEL`. Não é preciso instalar nem autenticar o Gemini CLI neste computador.
 
@@ -21,6 +21,25 @@ OpenRouter também está disponível com modelos sem custo. Crie uma conta e uma
 Cursor Agent só aparece como disponível quando o comando `cursor-agent` está acessível no PATH. A documentação atual do Cursor orienta a instalação da CLI no Windows via WSL.
 
 Claude Code e OpenCode voltaram a ficar disponíveis. Para pausar algum provedor (por exemplo, um CLI lento), coloque o ID dele em `PAUSED_PROVIDERS` no `server.py` **e** em `pausedProviderIds` no `static/app.js`, e reinicie o servidor. A divisão da barra lateral também é configurável: `mesaPrincipalIds` no `static/app.js` decide quem entra em **Sua mesa**; o resto vai para **Outros detectados**. O modo Completo faz respostas paralelas, uma rodada de revisão e uma síntese final. O modo Rápido pula a revisão cruzada e faz a síntese com as respostas iniciais, reduzindo uma rodada de chamadas sem trocar os modelos selecionados. Ambos respeitam a autenticação, os limites e a cobrança de cada serviço. Durante a conversa, a tela acompanha as etapas e mostra o tempo de cada IA e prévias do texto que chega; ao final, exibe a resposta consolidada com o cronômetro de cada participante e o botão **Ver as N respostas lado a lado**, que abre o texto completo de cada IA para comparação. A Mesa mostra respostas e progresso, não o raciocínio privado dos modelos.
+
+## Especialista em Código
+
+A Mesa tem uma opção dedicada a revisar código. Ela usa a mesma chave do OpenRouter, mas com **um modelo fixo**, escolhido só para isso — assim CSS, JavaScript, Python e afins são revisados sempre pelo mesmo "cérebro", em vez de sortear um modelo diferente a cada chamada.
+
+O padrão é `nvidia/nemotron-3-super-120b-a12b:free`. Ele foi escolhido em teste, não por folheto: entre os modelos gratuitos disponíveis, foi o único que acertou a pegadinha de lógica usada na escolha (um ancestral com `transform` passa a valer como referência de `position: fixed`) e respondeu em segundos — outro acertou, mas levou mais de quatro minutos por resposta.
+
+Além do modelo, ele recebe um pedido próprio: ler o código pela **lógica** (ordem de aplicação, especificidade, precedência, fluxo do script, estado no momento em que roda) em vez da aparência, mostrar o trecho exato do erro, dizer o efeito real dele e entregar a correção pronta para colar — e afirmar com franqueza quando o código está certo, em vez de inventar problema. Quando ele participa da rodada, a síntese final é avisada para tratar os trechos de código dele como a referência de código.
+
+**Trocar o modelo.** Feche a Mesa (Ctrl+C) e defina a variável antes de subir de novo:
+
+    $env:MESA_CODE_MODEL = "deepseek/deepseek-v4.1-flash"
+    .\start.ps1
+
+O nome mostrado na barra lateral vem do próprio modelo (por exemplo, `Nemotron 3 Super · grátis`); o texto completo fica no tooltip, porque a coluna é estreita. Os modelos DeepSeek do OpenRouter hoje são **pagos**, não gratuitos: a linha passa a mostrar `· pago` e cada resposta custa uma fração de centavo.
+
+**Usar só ele.** Até agora a Mesa exigia duas IAs. Agora **uma basta**: marque apenas o Especialista em Código e envie. Sem outra voz não há revisão cruzada nem síntese, então a Mesa entrega a resposta dele direto e **não gasta** as duas chamadas extras — o cartão diz **RESPOSTA DIRETA**, e o rodapé avisa que a rodada tem uma IA só. Com duas ou mais, tudo continua como antes: revisão cruzada, **RESPOSTA CONSOLIDADA** e o botão para ver as respostas lado a lado.
+
+**Limite.** Ele divide a chave e o limite diário do OpenRouter (no plano gratuito, 50 chamadas por dia e 20 por minuto). Uma rodada com ele usa de uma a três chamadas, conforme o modo e a seleção.
 
 ## Velocidade
 
@@ -74,7 +93,7 @@ O arquivo é gravado de forma atômica (escreve num temporário e troca), então
 ## Requisitos
 
 - Python 3.10 ou superior.
-- Pelo menos duas IAs disponíveis: CLIs instalados e autenticados, ou as chaves de API e o Ollama configurados.
+- Pelo menos uma IA disponível: um CLI instalado e autenticado, uma das chaves de API ou o Ollama configurado. Com duas ou mais, a Mesa também cruza as respostas.
 - Sem dependências Python externas.
 
-Os CLIs são executados a partir de uma pasta temporária vazia, para que a conversa não use arquivos do projeto nem altere seu código. Gemini, OpenRouter e Ollama não iniciam processo nenhum: a conversa acontece por HTTP. As animações da interface usam apenas `transform` e `opacity` e são desligadas quando o sistema pede menos movimento (`prefers-reduced-motion`). O mesmo vale para a rolagem: cada área (a conversa e a lista de provedores) rola por conta própria em qualquer tamanho de janela, e a conversa tem um controle próprio — setas para o topo e para o fim, trilha que aceita clique e arrasto do polegar, e teclado (setas, PageUp/PageDown, Home/End). Ele só aparece quando há conteúdo fora da tela.
+Os CLIs são executados a partir de uma pasta temporária vazia, para que a conversa não use arquivos do projeto nem altere seu código. Gemini, OpenRouter, Especialista em Código e Ollama não iniciam processo nenhum: a conversa acontece por HTTP. As animações da interface usam apenas `transform` e `opacity` e são desligadas quando o sistema pede menos movimento (`prefers-reduced-motion`). O mesmo vale para a rolagem: cada área (a conversa e a lista de provedores) rola por conta própria em qualquer tamanho de janela, e a conversa tem um controle próprio — setas para o topo e para o fim, trilha que aceita clique e arrasto do polegar, e teclado (setas, PageUp/PageDown, Home/End). Ele só aparece quando há conteúdo fora da tela.

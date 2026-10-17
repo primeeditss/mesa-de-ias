@@ -1,10 +1,10 @@
-const providerNames = {claude: "Claude Code", codex: "Codex", opencode: "OpenCode", gemini: "Gemini", openrouter: "OpenRouter", cursor: "Cursor Agent", qwen: "Qwen Code", ollama: "Ollama local"};
-const providerDetails = {openrouter: "Modelos grátis", ollama: "Qwen 3.5 · 4B"};
-const providerMarks = {claude: "C", codex: "O", opencode: "⌘", gemini: "G", openrouter: "R", cursor: "↗", qwen: "Q", ollama: "◉"};
+const providerNames = {claude: "Claude Code", codex: "Codex", opencode: "OpenCode", gemini: "Gemini", openrouter: "OpenRouter", coder: "Especialista em Código", cursor: "Cursor Agent", qwen: "Qwen Code", ollama: "Ollama local"};
+const providerDetails = {openrouter: "Modelos grátis", coder: "Código · grátis", ollama: "Qwen 3.5 · 4B"};
+const providerMarks = {claude: "C", codex: "O", opencode: "⌘", gemini: "G", openrouter: "R", coder: "{}", cursor: "↗", qwen: "Q", ollama: "◉"};
 // Espelha o PAUSED_PROVIDERS do servidor: vazio = todos os detectados liberados.
 const pausedProviderIds = new Set();
 // Ordem da barra lateral: primeiro a mesa principal do usuário, depois o resto.
-const mesaPrincipalIds = ["codex", "opencode", "gemini", "openrouter", "ollama", "claude"];
+const mesaPrincipalIds = ["codex", "opencode", "gemini", "openrouter", "coder", "ollama", "claude"];
 // Perguntas curtas não ganham nada com a rodada de revisão cruzada: até este
 // tamanho a Mesa escolhe o modo Rápido sozinha (o seletor mostra a escolha).
 const MODO_RAPIDO_ATE = 120;
@@ -79,10 +79,8 @@ function buildProviderRow(provider, index, animate) {
   check.addEventListener("change", () => {
     if (check.checked) state.selected.add(provider.id);
     else state.selected.delete(provider.id);
-    if (state.selected.size < 2 && check.checked) {
-      const fallback = state.providers.find(p => p.installed && p.id !== provider.id);
-      if (fallback) state.selected.add(fallback.id);
-    }
+    // Uma IA já basta para conversar (é o caso de marcar só o Especialista em
+    // Código). Se nada ficar marcado, a hora de enviar avisa.
     renderProviders();
   });
 
@@ -97,10 +95,17 @@ function buildProviderRow(provider, index, animate) {
   name.textContent = providerNames[provider.id] || provider.label;
   const meta = document.createElement("span");
   meta.className = "provider-meta";
-  if (providerDetails[provider.id]) {
+  // O servidor manda o "detail" quando o modelo pode ser trocado por variável de
+  // ambiente (hoje, o Especialista em Código): assim a barra lateral nunca mente
+  // sobre qual modelo está respondendo.
+  const detailText = provider.detail || providerDetails[provider.id];
+  if (detailText) {
     const detail = document.createElement("small");
     detail.className = "provider-detail";
-    detail.textContent = providerDetails[provider.id];
+    detail.textContent = detailText;
+    // A barra lateral é estreita e corta o texto com reticências: o nome completo
+    // do modelo fica no tooltip (e o tooltip não atrapalha quem só passa o olho).
+    detail.title = detailText;
     meta.append(detail);
   }
   const status = document.createElement("span");
@@ -184,8 +189,9 @@ function renderProviders() {
   if (heroRosterText) {
     heroRosterText.textContent = detectedCount
       ? `${selectedAvailable.length} de ${detectedCount} IAs na mesa`
-      : "Conecte pelo menos duas IAs para começar";
+      : "Conecte pelo menos uma IA para começar";
   }
+  updateModeNote();
   if (previousSynth && selectedAvailable.includes(previousSynth)) synthesizer.value = previousSynth;
   else if (selectedAvailable.includes("codex")) synthesizer.value = "codex";
   else if (selectedAvailable.length) synthesizer.value = selectedAvailable[0];
@@ -325,8 +331,11 @@ function addAnswer(text, provider, notes = [], trust = null) {
   mark.className = "brand-mark";
   mark.textContent = "✳";
   const label = document.createElement("span");
+  // Sem rodada de síntese (rodada com uma IA só) o cartão não é "consolidado":
+  // é a resposta dela, entregue direto. O rótulo não promete mais do que a Mesa fez.
+  const direta = Boolean(trust) && !trust.synthSeconds;
   const synthesisTime = trust && trust.synthSeconds ? ` · ${formatSeconds(trust.synthSeconds)}` : "";
-  label.textContent = `RESPOSTA CONSOLIDADA · ${providerNames[provider] || provider}${synthesisTime}`;
+  label.textContent = `${direta ? "RESPOSTA DIRETA" : "RESPOSTA CONSOLIDADA"} · ${providerNames[provider] || provider}${synthesisTime}`;
   heading.append(mark, label);
   const body = document.createElement("div");
   body.className = "answer-text";
@@ -555,8 +564,8 @@ form.addEventListener("submit", async event => {
   const text = input.value.trim();
   if (!text || state.busy) return;
   const providers = [...state.selected].filter(id => state.providers.some(p => p.id === id && p.installed));
-  if (providers.length < 2) {
-    addError("Selecione pelo menos duas IAs instaladas na barra lateral.");
+  if (providers.length < 1) {
+    addError("Selecione pelo menos uma IA instalada na barra lateral.");
     return;
   }
   previewMode();
@@ -623,6 +632,12 @@ input.addEventListener("input", () => {
 });
 
 function updateModeNote(auto) {
+  // Com uma IA só não existe revisão cruzada nem resposta consolidada por outra:
+  // a IA responde direto, e a Mesa nem gasta as chamadas extras.
+  if (state.selected.size === 1) {
+    modeNote.textContent = "Com uma IA só, ela responde direto — sem revisão cruzada e sem síntese de outra IA.";
+    return;
+  }
   modeNote.textContent = modeSelect.value === "fast"
     ? "Rápida pula a revisão cruzada. Os modelos continuam iguais; há menos uma rodada de comparação."
     : "Completa inclui revisão cruzada. Cada provedor usa a autenticação e os limites da sua conta.";

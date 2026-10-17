@@ -28,6 +28,8 @@ resposta final.
 - ✅ Busca no histórico (ignora acento e maiúscula) e exportação da conversa em `.md` ou `.html`
 - ✅ Painel de confiança: "Testar minhas IAs" (tempo e motivo de cada uma) e cronômetro por IA na rodada
 - ✅ Respostas completas de cada IA, "lado a lado" (Opção A1) — sem o corte de 1.400 caracteres
+- ✅ Especialista em Código (provedor `coder`, via OpenRouter com modelo fixo e prompt próprio)
+- ✅ Mesa aceita uma IA só — sem revisão nem síntese inúteis, cartão "RESPOSTA DIRETA"
 
 ## O que precisa ser feito
 
@@ -167,6 +169,55 @@ inteira, botão com a contagem certa, painel abrindo, 3 contribuições, colunas
 3 × 361 px numa largura de 1.180 px, modo empilhado, fechar devolvendo o foco, reabrir sem
 chamada nova, conversa reaberta do histórico com o texto inteiro e console sem erro).
 
+## Sétima rodada — Especialista em Código (provedor `coder`)
+
+Pedido do usuário: uma IA dedicada a programação, porque o Gemini vinha cometendo erros de
+lógica em CSS; escolhida só ela quando for programar.
+
+1. ✅ **DeepSeek gratuito não existe mais.** Antes de escrever código, a lista pública de
+   modelos do OpenRouter foi consultada: dos 471 modelos, 19 são gratuitos e **nenhum é
+   DeepSeek** (`deepseek/deepseek-coder` e `deepseek/deepseek-r1:free`, sugeridos pelo usuário,
+   não existem mais). Os DeepSeek atuais (`deepseek/deepseek-v4.1-flash`, `...chat-v3.1`,
+   `...r1`) são pagos.
+2. ✅ **Modelo escolhido por teste, não por folheto.** Três perguntas de lógica de CSS, com
+   resposta verificável, foram enviadas aos candidatos gratuitos. A pergunta decisiva: um
+   ancestral com `transform` vira referência de `position: fixed`? Resultado:
+   `poolside/laguna-s-2.1`, `cohere/north-mini-code`, `nvidia/nemotron-3.5-lightning` e
+   `nvidia/nemotron-3-nano-omni` **erraram** (responderam "colado na janela", com confiança);
+   `nvidia/nemotron-3-super-120b-a12b:free` **acertou** em 27 s e
+   `xingchen-agi/xing4.0-29b-a4b` acertou, mas levou **266 s** (estouraria o tempo limite de
+   240 s da Mesa). `google/gemma-4-31b-it:free` respondeu HTTP 429 e
+   `thinkingmachines/inkling:free` respondeu HTTP 403 (só para "agentic harnesses").
+   **Decisão**: padrão `nvidia/nemotron-3-super-120b-a12b:free`.
+3. ✅ **Provedor `coder`** em `server.py`: entra em `PROVIDERS` ("Especialista em Código") e em
+   `DIRECT_API_PROVIDERS`; `provider_status()` o reporta como pronto quando existe
+   `OPENROUTER_API_KEY` (mesma chave do OpenRouter) e devolve `detail` com o nome curto do
+   modelo. `run_openrouter()` ganhou o parâmetro `model` (o roteador `openrouter/free` continua
+   igual); `run_provider("coder")` chama o modelo fixo.
+4. ✅ **Prompt de especialista**: `build_prompt()` acrescenta um bloco só para o `coder` — ler o
+   código pela lógica (ordem de aplicação, especificidade, precedência, fluxo, estado em
+   execução), mostrar o trecho exato e o efeito real, entregar a correção pronta e não inventar
+   problema. Quando ele participou, a síntese recebe o aviso para tratar os trechos de código
+   dele como a referência de código.
+5. ✅ **Nome honesto na barra lateral**: o texto de detalhe vem do **servidor**
+   (`provider.detail`, com o `app.js` aceitando-o antes do mapa fixo), então trocar o modelo por
+   `MESA_CODE_MODEL` muda o que aparece na tela — e modelo pago aparece como `· pago`.
+6. ✅ **Uma IA só (o que o usuário pediu: "marcar só ele")**: a Mesa exigia duas IAs. Agora
+   `len(selected) < 1` é o único bloqueio, e a rodada com **um contribuinte** pula revisão e
+   síntese — a resposta já é a final. Isso economiza duas chamadas por rodada (importante no
+   limite de 50/dia do OpenRouter) e o cartão diz **RESPOSTA DIRETA** em vez de
+   "RESPOSTA CONSOLIDADA". Com duas ou mais, nada mudou.
+7. ✅ **Limites honestos**: `MAX_NOTE_CHARS`, histórico e exportação valem igual para o novo
+   provedor; o item divide a chave e o limite diário do OpenRouter.
+
+Testado com 52 verificações automáticas (`teste_especialista.py`, IAs falsas, porta 8897,
+nenhuma cota gasta) — barra lateral, modelo configurado e trocável, roteamento para o modelo
+certo, prompt de especialista (e ausência dele nos outros), rodada com uma IA só (uma única
+chamada, sem síntese, cartão com a resposta integral), rodadas com duas IAs sem regressão e os
+arquivos da tela — mais o navegador (item na barra lateral com símbolo `{}` e detalhe do modelo,
+só ele marcado → "RESPOSTA DIRETA · Especialista em Código" com o texto inteiro e o cronômetro,
+depois com Gemini → "RESPOSTA CONSOLIDADA" e "Ver as 2 respostas lado a lado", console sem erro).
+
 ## Decisões técnicas
 
 - **Gemini**: API do Google AI Studio, chave `GEMINI_API_KEY` no `.env`.
@@ -222,6 +273,23 @@ chamada nova, conversa reaberta do histórico com o texto inteiro e console sem 
   as contribuições uma por uma. Quem quer comparar e ouvir cada voz usa o painel novo; a A2
   (síntese estruturada, com concordâncias, divergências e quem sustenta cada ponto) fica para
   depois, quando houver mais de duas IAs respondendo.
+- **Especialista em Código = modelo fixo, não o roteador**: o `openrouter` continua usando
+  `openrouter/free` (que sorteia um modelo gratuito a cada chamada). O `coder` aponta para um
+  modelo escolhido (`MESA_CODE_MODEL`), porque um revisor de código precisa ser o **mesmo** toda
+  vez — com o roteador, uma revisão boa e outra ruim não teriam de onde vir. Os dois dividem a
+  mesma chave e o mesmo limite diário.
+- **Modelo por variável de ambiente, nome na tela**: `code_model_detail()` deriva o nome curto do
+  próprio id do modelo (`MODEL_SHORT_NAMES` cobre os conhecidos) e marca `· grátis` ou `· pago`.
+  O `app.js` prefere `provider.detail` ao mapa fixo, então trocar `MESA_CODE_MODEL` muda o que
+  aparece na barra lateral — sem editar a interface, sem prometer o que não é.
+- **Uma contribuição não se sintetiza**: com um único contribuinte, revisão cruzada e síntese
+  seriam chamadas pagas para reescrever o mesmo texto. `orchestrate()` entrega a resposta como
+  ela veio (`publish_end()`, o mesmo desfecho da síntese) e o rótulo do cartão passa a
+  **RESPOSTA DIRETA**. Isso também vale quando várias IAs são marcadas e só uma responde — quem
+  falhou continua listado no rodapé, e a pessoa sai com a resposta em vez de um erro.
+- **Especialista é prompt, não só modelo**: o bloco de `build_prompt()` para o `coder` vale para
+  qualquer modelo configurado em `MESA_CODE_MODEL`, para a especialidade não depender da sorte de
+  qual modelo está na moda naquele mês.
 
 ## Progresso (git)
 
@@ -233,6 +301,7 @@ chamada nova, conversa reaberta do histórico com o texto inteiro e console sem 
 - rodada 4 (busca no histórico + exportar em `.md`/`.html`) — `git log --oneline` mostra o hash
 - rodada 5 (testar as IAs + cronômetros) — `git log --oneline` mostra o hash
 - rodada 6 (respostas completas lado a lado) — `git log --oneline` mostra o hash
+- rodada 7 (Especialista em Código + rodada com uma IA só) — `git log --oneline` mostra o hash
 
 Cada pasta tem o próprio repositório Git: a pasta de trabalho (esta) e o espelho em
 `C:\Users\aceli\OneDrive\Documentos\Projeto Padrão`. As duas ficam com o mesmo conteúdo.
@@ -263,6 +332,13 @@ Cada pasta tem o próprio repositório Git: a pasta de trabalho (esta) e o espel
 - As respostas completas viajam inteiras até 20.000 caracteres por IA (`MAX_NOTE_CHARS`). Acima
   disso — o que não é uma resposta normal — o fim é cortado, para o arquivo e a tela não
   sofrerem. O número está num lugar só, então mudar o teto é mexer numa linha.
+- **Modelos gratuitos são instáveis**: na escolha do Especialista em Código, dois candidatos
+  responderam HTTP 429 e um respondeu HTTP 403. Quando ele falhar, a etiqueta âmbar aparece na
+  lista com o motivo ("limite atingido") e ele sai da seleção padrão da rodada seguinte — tentar
+  de novo mais tarde costuma bastar. Se incomodar, trocar `MESA_CODE_MODEL` é uma linha.
+- **DeepSeek hoje é pago no OpenRouter** (as versões gratuitas não existem mais). Para usar
+  DeepSeek de verdade: colocar créditos na conta do OpenRouter e definir
+  `MESA_CODE_MODEL=deepseek/deepseek-v4.1-flash` (a barra lateral passa a mostrar `· pago`).
 
 ## Retomar as IAs (3 passos, quando você quiser)
 
@@ -271,24 +347,31 @@ Cada pasta tem o próprio repositório Git: a pasta de trabalho (esta) e o espel
 3. **Conferir**: clicar em "Testar minhas IAs" e ler o cartão. O Codex está com limite até
    **11/11/2026 16:56** (não adianta tentar antes disso) e o Qwen Code pede `/auth` dentro dele.
 
-Enquanto isso, a Mesa conversa com duas IAs (**Gemini + OpenRouter**): o app funciona de ponta a
-ponta, mas a "sala de debate" (Opção A2) só passa a valer com três ou mais respondendo.
+Enquanto isso, a Mesa conversa com três nomes — **Gemini**, **OpenRouter** e **Especialista em
+Código** (os dois últimos dividem a chave e o limite diário do OpenRouter). O app funciona de
+ponta a ponta; a "sala de debate" (Opção A2) passa a valer de verdade com três ou mais vozes
+independentes respondendo.
 
 ## Fecho da sessão (17/10/2026)
 
-**Pronto e testado**: itens 1–5 do HANDOFF e as rodadas 2 a 6 — barra lateral organizada,
+**Pronto e testado**: itens 1–5 do HANDOFF e as rodadas 2 a 7 — barra lateral organizada,
 Gemini/Ollama por HTTP, animações, visual aconchegante, provedores reativados, rapidez +
-histórico, rolagem, buscar/exportar (Opção C), testar as IAs + cronômetros (Opção B) e as
-respostas completas lado a lado (Opção A1). A Mesa é usável de ponta a ponta hoje.
+histórico, rolagem, buscar/exportar (Opção C), testar as IAs + cronômetros (Opção B), as
+respostas completas lado a lado (Opção A1), o **Especialista em Código** e a rodada com uma IA
+só. A Mesa é usável de ponta a ponta hoje.
 
 **O que falta, em ordem de valor:**
 
-1. **Recuperar as IAs** (hoje só Gemini e OpenRouter respondem — duas vozes): os 3 passos da
-   seção acima.
-2. **Opção A2 — sala de debate de verdade**: com 3+ IAs respondendo, a resposta final ganha
+1. **Recuperar as IAs** (hoje respondem Gemini, OpenRouter e o Especialista em Código — mas os
+   dois últimos dividem a mesma chave): os 3 passos da seção acima.
+2. **Decidir sobre o modelo do Especialista em Código**: ele hoje usa um gratuito
+   (`nvidia/nemotron-3-super-120b-a12b:free`), sujeito a instabilidade e ao limite diário da
+   chave do OpenRouter. Se o DeepSeek de verdade for desejado (pago, fração de centavo por
+   resposta), basta definir `MESA_CODE_MODEL`.
+3. **Opção A2 — sala de debate de verdade**: com 3+ IAs respondendo, a resposta final ganha
    blocos fixos — onde concordam, onde divergem, o que só uma trouxe e quem sustenta cada ponto.
    Depende de o modelo obedecer ao formato, por isso ficou para depois de usar o app alguns dias.
-3. **Opção D — provedor compatível com OpenAI**: o `.env` tem 5 chaves que nenhuma linha do
+4. **Opção D — provedor compatível com OpenAI**: o `.env` tem 5 chaves que nenhuma linha do
    projeto lê (`OMNIROUTE_API_KEY`, `ZEN_API_KEY`, `ZEN_BASE_URL`, `ZEN_MODEL=deep.free`,
    `PLANNER_PROVIDER`). Uma opção é dar à Mesa um provedor genérico "compatível com OpenAI"
    (`base_url` + chave + modelo), o que destravaria qualquer serviço novo sem mexer no código.
