@@ -1,12 +1,12 @@
 # Mesa de IAs
 
-Aplicativo local de conversa multiprovedor. Você envia uma pergunta, as IAs selecionadas respondem em paralelo, leem as contribuições umas das outras e fazem uma revisão; por fim, uma IA escolhida produz a resposta única. Os provedores ficam numa barra lateral dividida entre **Sua mesa** e **Outros detectados**.
+Aplicativo local de conversa multiprovedor. Você envia uma pergunta, as IAs selecionadas respondem em paralelo, leem as contribuições umas das outras e fazem uma revisão; por fim, uma IA escolhida produz a resposta única. Os provedores ficam numa barra lateral dividida entre **Sua mesa** e **Outros detectados**, com o **Histórico** das conversas logo abaixo.
 
 ## Abrir
 
 No PowerShell, execute `.\start.ps1` dentro desta pasta. O navegador abre em `http://127.0.0.1:8765`. Para fechar, pressione `Ctrl+C` no PowerShell.
 
-O servidor escuta somente em `127.0.0.1`, não na rede. Ele usa a autenticação que cada CLI já tem no computador e as chaves de API do `.env` (para os provedores chamados por HTTP), e não grava as respostas em disco. O histórico da conversa permanece no navegador enquanto a página estiver aberta.
+O servidor escuta somente em `127.0.0.1`, não na rede. Ele usa a autenticação que cada CLI já tem no computador e as chaves de API do `.env` (para os provedores chamados por HTTP). As conversas ficam salvas em `historico.json`, nesta mesma pasta, e podem ser reabertas na seção **Histórico** da barra lateral: o arquivo é lido e gravado só neste computador e nada é enviado para fora. Apague `historico.json` — ou use o `×` de cada conversa — para limpar tudo.
 
 ## Conectores
 
@@ -21,6 +21,22 @@ OpenRouter também está disponível com modelos sem custo. Crie uma conta e uma
 Cursor Agent só aparece como disponível quando o comando `cursor-agent` está acessível no PATH. A documentação atual do Cursor orienta a instalação da CLI no Windows via WSL.
 
 Claude Code e OpenCode voltaram a ficar disponíveis. Para pausar algum provedor (por exemplo, um CLI lento), coloque o ID dele em `PAUSED_PROVIDERS` no `server.py` **e** em `pausedProviderIds` no `static/app.js`, e reinicie o servidor. A divisão da barra lateral também é configurável: `mesaPrincipalIds` no `static/app.js` decide quem entra em **Sua mesa**; o resto vai para **Outros detectados**. O modo Completo faz respostas paralelas, uma rodada de revisão e uma síntese final. O modo Rápido pula a revisão cruzada e faz a síntese com as respostas iniciais, reduzindo uma rodada de chamadas sem trocar os modelos selecionados. Ambos respeitam a autenticação, os limites e a cobrança de cada serviço. Durante a conversa, a tela acompanha as etapas e mostra prévias do texto que chega de cada IA; ao final, exibe a resposta consolidada e deixa as contribuições individuais disponíveis para consulta. A Mesa mostra respostas e progresso, não o raciocínio privado dos modelos.
+
+## Velocidade
+
+A Mesa evita o trabalho que não vira resposta:
+
+- **Memória de falhas.** Um provedor que falha numa rodada (sem login, sem saldo, sem cota) ganha etiqueta âmbar com o motivo no lugar do "instalado" e sai da seleção padrão. Cada rodada atualiza essa memória; reiniciar o servidor começa de novo.
+- **Síntese por quem respondeu.** Se a IA escolhida para a resposta final não respondeu na rodada inicial, a síntese passa para outra que respondeu — em vez de gastar uma chamada fadada a falhar (um CLI leva ~20 s só para recusar).
+- **Modo Rápido automático.** Perguntas curtas pulam a revisão cruzada sozinhas, e o seletor mostra a escolha. Assim que você troca o modo à mão, a Mesa para de mexer nele. O limite de tamanho está em `MODO_RAPIDO_ATE` no `static/app.js`.
+
+Com isso, uma pergunta simples respondida por Gemini e OpenRouter cai de ~50 s para ~7 s. Os CLIs (Claude Code, Codex, OpenCode, Cursor) levam de 16 a 22 s por chamada só para iniciar, então rendem mais em perguntas que realmente precisam deles.
+
+## Histórico de conversas
+
+Cada conversa concluída é gravada em `historico.json`, na pasta do projeto, com as 50 mais recentes primeiro. A seção **Histórico** da barra lateral mostra o título, quantas mensagens tem e quando foi a última vez; clicar reabre a conversa no meio da tela e permite continuar de onde parou, com o contexto das mensagens anteriores. O `×` apaga uma conversa, com confirmação.
+
+O arquivo é gravado de forma atômica (escreve num temporário e troca), então fechar o servidor no meio da gravação não corrompe o JSON — e ele fica fora do Git pelo `.gitignore`. Só texto é salvo: o raciocínio privado dos modelos não entra no arquivo, como também não aparece na tela.
 
 ## Requisitos
 

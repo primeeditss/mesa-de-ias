@@ -14,6 +14,13 @@
       <div class="brand"><span class="brand-mark">✳</span><span>Mesa de IAs</span></div>
       <button class="new-chat" id="newChat"><span>＋</span> Nova conversa</button>
       <div id="providerList" class="provider-list" role="group" aria-label="Provedores de IA na sua mesa" aria-live="polite"></div>
+      <section class="history" id="historyBox" aria-label="Histórico de conversas" hidden>
+        <div class="history-head">
+          <span class="history-title">Histórico</span>
+          <span class="history-hint" id="historyCount"></span>
+        </div>
+        <div class="history-list" id="historyList"></div>
+      </section>
       <div class="sidebar-bottom">
         <div class="privacy-icon">⌂</div>
         <div><strong>Rodando neste computador</strong><small>“Instalado” não confirma login, saldo ou cota. Ollama processa localmente.</small></div>

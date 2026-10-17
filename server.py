@@ -72,6 +72,31 @@ jobs_lock = threading.Lock()
 ollama_status_cache: dict[str, Any] = {"checked": 0.0, "ready": False, "mode": "unknown", "reason": ""}
 ollama_status_lock = threading.Lock()
 
+# Histórico de conversas: um JSON nesta pasta, gravado de forma atômica.
+HISTORY_FILE = ROOT / "historico.json"
+MAX_HISTORY = 50
+history_lock = threading.Lock()
+
+# Último erro de cada provedor nesta sessão do servidor. Serve para a barra
+# lateral não marcar de novo quem acabou de falhar (falta de login, de saldo…).
+provider_last_error: dict[str, str] = {}
+provider_error_lock = threading.Lock()
+
+
+def short_failure_reason(detail: str) -> str:
+    """Traduz o erro cru de um provedor numa etiqueta curta e legível."""
+    text = (detail or "").lower()
+    if any(mark in text for mark in (
+        "not logged in", "/login", "authentication required", "agent login",
+        "unauthorized", "401", "invalid api key", "api key not valid",
+    )):
+        return "sem login"
+    if any(mark in text for mark in ("insufficient", "balance", "quota", "credit", "402", "429")):
+        return "sem saldo"
+    if any(mark in text for mark in ("recusou", "connection", "timed out", "timeout", "refused")):
+        return "sem conexão"
+    return "falhou agora"
+
 
 def command_prefix(provider_id: str) -> list[str] | None:
     name = PROVIDERS[provider_id]["command"]
@@ -215,6 +240,14 @@ def provider_status() -> list[dict[str, Any]]:
             "state": state,
             "reason": reason,
         })
+    # Memória de falhas: expõe o último erro e, para um CLI que apenas "parece
+    # instalado", troca o estado genérico pelo motivo real (sem login, sem saldo).
+    for item in result:
+        error = provider_last_error.get(item["id"], "")
+        item["last_error"] = error
+        if error and item["installed"] and item["state"] == "instalado":
+            item["state"] = short_failure_reason(error)
+            item["reason"] = error
     return result
 
 
@@ -622,11 +655,15 @@ def run_parallel(
             )
             with result_lock:
                 results[provider] = answer
+            with provider_error_lock:
+                provider_last_error.pop(provider, None)
             if on_progress:
                 on_progress(provider, "Concluída")
         except Exception as exc:
             with result_lock:
                 errors[provider] = str(exc)
+            with provider_error_lock:
+                provider_last_error[provider] = str(exc)
             if on_progress:
                 on_progress(provider, "Não respondeu")
 
@@ -695,6 +732,19 @@ def orchestrate(job_id: str, message: str, history: list[dict[str, str]],
             if not reviews:
                 reviews = first
                 review_errors = {**review_errors, "aviso": "A revisão falhou; usei as respostas iniciais."}
+
+        # Se a IA escolhida para a resposta final não respondeu nesta rodada, não
+        # gaste uma chamada fadada a falhar (um CLI leva ~20s só para recusar):
+        # entregue a síntese a uma IA que comprovadamente respondeu.
+        if synthesizer not in first:
+            substitute = next((p for p in selected if p in first), None)
+            if substitute:
+                review_errors["síntese"] = (
+                    f"{PROVIDERS[synthesizer]['label']} não respondeu nesta rodada; "
+                    f"a resposta final ficou com {PROVIDERS[substitute]['label']}."
+                )
+                update_provider_progress(job_id, synthesizer, "Não respondeu; fora da síntese")
+                synthesizer = substitute
 
         synthesis_source = reviews or first
         publish(
@@ -767,6 +817,102 @@ def orchestrate(job_id: str, message: str, history: list[dict[str, str]],
         publish(job_id, status="error", phase="Falhou", error=str(exc))
 
 
+# ------------------------------- Histórico -------------------------------
+# As conversas ficam em `historico.json`, nesta pasta. Nada sai do computador:
+# o arquivo é escrito localmente e lido de volta quando você abre o Histórico.
+
+def _clean_history_entry(raw: Any) -> dict[str, Any] | None:
+    """Aceita só o que a Mesa sabe desenhar de volta na tela."""
+    if not isinstance(raw, dict):
+        return None
+    role = str(raw.get("role", ""))
+    if role not in ("user", "assistant"):
+        return None
+    entry: dict[str, Any] = {"role": role, "text": str(raw.get("text", ""))[:20000]}
+    if role == "assistant":
+        entry["provider"] = str(raw.get("provider", ""))[:60]
+        notes = []
+        for note in raw.get("notes") or []:
+            if isinstance(note, dict) and len(notes) < 12:
+                notes.append({
+                    "provider": str(note.get("provider", ""))[:60],
+                    "summary": str(note.get("summary", ""))[:20000],
+                })
+        entry["notes"] = notes
+    return entry
+
+
+def read_history() -> list[dict[str, Any]]:
+    try:
+        data = json.loads(HISTORY_FILE.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return []
+    items = data.get("conversations") if isinstance(data, dict) else None
+    return [item for item in items if isinstance(item, dict)] if isinstance(items, list) else []
+
+
+def write_history(items: list[dict[str, Any]]) -> None:
+    """Grava num arquivo temporário e troca: um Ctrl+C no meio não corrompe o JSON."""
+    temporary = HISTORY_FILE.with_suffix(".json.tmp")
+    temporary.write_text(
+        json.dumps({"version": 1, "conversations": items[:MAX_HISTORY]}, ensure_ascii=False, indent=1),
+        encoding="utf-8",
+    )
+    temporary.replace(HISTORY_FILE)
+
+
+def history_summary(item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": str(item.get("id", "")),
+        "title": str(item.get("title", ""))[:80],
+        "created": float(item.get("created", 0) or 0),
+        "updated": float(item.get("updated", 0) or 0),
+        "count": len(item.get("messages") or []),
+    }
+
+
+def save_conversation(raw: dict[str, Any]) -> dict[str, Any] | None:
+    messages = [
+        entry for entry in (_clean_history_entry(item) for item in (raw.get("messages") or [])[:200])
+        if entry
+    ]
+    if not messages:
+        return None
+    conversation_id = str(raw.get("id") or "").strip()[:64]
+    if not re.fullmatch(r"[A-Za-z0-9_-]{6,64}", conversation_id):
+        conversation_id = uuid.uuid4().hex
+    title = str(raw.get("title") or "").strip().replace("\n", " ")[:80]
+    if not title:
+        first_user = next((entry["text"] for entry in messages if entry["role"] == "user"), "")
+        title = first_user.strip().replace("\n", " ")[:80] or "Conversa sem título"
+    with history_lock:
+        items = read_history()
+        previous = next((item for item in items if str(item.get("id")) == conversation_id), None)
+        now = time.time()
+        record = {
+            "id": conversation_id,
+            "title": title,
+            "created": float(previous.get("created", now)) if previous else now,
+            "updated": now,
+            "messages": messages,
+        }
+        # Mais recente primeiro.
+        items = [item for item in items if str(item.get("id")) != conversation_id]
+        items.insert(0, record)
+        write_history(items)
+    return history_summary(record)
+
+
+def delete_conversation(conversation_id: str) -> bool:
+    with history_lock:
+        items = read_history()
+        remaining = [item for item in items if str(item.get("id")) != conversation_id]
+        if len(remaining) == len(items):
+            return False
+        write_history(remaining)
+    return True
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "MesaIAs/1.0"
 
@@ -786,6 +932,17 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         if parsed.path == "/api/providers":
             self.send_json(200, {"providers": provider_status()})
+            return
+        if parsed.path == "/api/historico":
+            self.send_json(200, {"conversations": [history_summary(item) for item in read_history()]})
+            return
+        if parsed.path.startswith("/api/historico/"):
+            conversation_id = unquote(parsed.path.removeprefix("/api/historico/"))
+            found = next((item for item in read_history() if str(item.get("id")) == conversation_id), None)
+            if not found:
+                self.send_json(404, {"error": "Conversa não encontrada"})
+                return
+            self.send_json(200, found)
             return
         if parsed.path.startswith("/api/jobs/"):
             job_id = unquote(parsed.path.removeprefix("/api/jobs/"))
@@ -823,8 +980,40 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def do_DELETE(self) -> None:
+        path = urlparse(self.path).path
+        if not path.startswith("/api/historico/"):
+            self.send_error(404)
+            return
+        conversation_id = unquote(path.removeprefix("/api/historico/"))
+        if delete_conversation(conversation_id):
+            self.send_json(200, {"removed": conversation_id})
+        else:
+            self.send_json(404, {"error": "Conversa não encontrada"})
+
     def do_POST(self) -> None:
-        if urlparse(self.path).path != "/api/chat":
+        path = urlparse(self.path).path
+        if path == "/api/historico":
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                if length > 2_000_000:
+                    self.send_json(413, {"error": "Conversa muito grande"})
+                    return
+                data = json.loads(self.rfile.read(length))
+                if not isinstance(data, dict):
+                    self.send_json(400, {"error": "Pedido inválido"})
+                    return
+                saved = save_conversation(data)
+                if not saved:
+                    self.send_json(400, {"error": "Conversa vazia"})
+                    return
+                self.send_json(200, saved)
+            except (ValueError, TypeError, json.JSONDecodeError) as exc:
+                self.send_json(400, {"error": f"Pedido inválido: {exc}"})
+            except OSError as exc:
+                self.send_json(500, {"error": f"Não consegui gravar o histórico: {exc}"})
+            return
+        if path != "/api/chat":
             self.send_error(404)
             return
         try:

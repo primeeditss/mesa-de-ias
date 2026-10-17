@@ -5,7 +5,20 @@ const providerMarks = {claude: "C", codex: "O", opencode: "⌘", gemini: "G", op
 const pausedProviderIds = new Set();
 // Ordem da barra lateral: primeiro a mesa principal do usuário, depois o resto.
 const mesaPrincipalIds = ["codex", "opencode", "gemini", "openrouter", "ollama", "claude"];
-const state = {providers: [], selected: new Set(), history: [], busy: false, providersRendered: false};
+// Perguntas curtas não ganham nada com a rodada de revisão cruzada: até este
+// tamanho a Mesa escolhe o modo Rápido sozinha (o seletor mostra a escolha).
+const MODO_RAPIDO_ATE = 120;
+let modePinned = false;
+const state = {
+  providers: [],
+  selected: new Set(),
+  history: [],
+  turns: [],
+  conversationId: null,
+  conversations: [],
+  busy: false,
+  providersRendered: false,
+};
 
 const providerList = document.querySelector("#providerList");
 const synthesizer = document.querySelector("#synthesizer");
@@ -19,10 +32,16 @@ const sendButton = document.querySelector("#sendButton");
 const modeSelect = document.querySelector("#mode");
 const modeNote = document.querySelector("#modeNote");
 const heroRosterText = document.querySelector("#heroRosterText");
+const historyBox = document.querySelector("#historyBox");
+const historyList = document.querySelector("#historyList");
+const historyCount = document.querySelector("#historyCount");
 
 function providerStateKind(provider) {
-  if (provider.installed) return "ready";
-  return /pausad/i.test(provider.state || "") ? "paused" : "missing";
+  if (/pausad/i.test(provider.state || "")) return "paused";
+  if (!provider.installed) return "missing";
+  // "Instalado" não quer dizer "funcionando": se a última rodada falhou por
+  // falta de login ou de saldo, a linha mostra isso e sai da seleção padrão.
+  return provider.last_error ? "failed" : "ready";
 }
 
 function buildProviderRow(provider, index, animate) {
@@ -35,7 +54,7 @@ function buildProviderRow(provider, index, animate) {
     row.style.setProperty("--row-index", index);
   }
   row.dataset.id = provider.id;
-  if (kind === "ready" && state.selected.has(provider.id)) row.classList.add("is-selected");
+  if (provider.installed && state.selected.has(provider.id)) row.classList.add("is-selected");
 
   const check = document.createElement("input");
   check.type = "checkbox";
@@ -437,12 +456,14 @@ form.addEventListener("submit", async event => {
     addError("Selecione pelo menos duas IAs instaladas na barra lateral.");
     return;
   }
+  previewMode();
   state.busy = true;
   welcome.hidden = true;
   input.value = "";
   input.style.height = "auto";
   sendButton.disabled = true;
   addUserMessage(text);
+  state.turns.push({role: "user", text});
   addStatus("Enviando a pergunta", `${providers.map(id => providerNames[id]).join(" · ")}`);
   try {
     const response = await fetch("/api/chat", {
@@ -468,29 +489,52 @@ form.addEventListener("submit", async event => {
     );
     const job = await waitForJob(created.id);
     addAnswer(job.final, job.final_provider, job.notes || []);
+    state.turns.push({role: "assistant", text: job.final, provider: job.final_provider, notes: job.notes || []});
     if (job.unavailable && Object.keys(job.unavailable).length) {
       const missed = Object.entries(job.unavailable).map(([name, reason]) => `${name}: ${reason}`).join("\n");
       addError(`Algumas IAs não responderam nesta rodada:\n${missed}`);
     }
     state.history.push({role: "user", content: text}, {role: "assistant", content: job.final});
     state.history = state.history.slice(-12);
+    await saveConversation();
   } catch (error) {
     addError(error.message || "Erro inesperado");
   } finally {
     state.busy = false;
     sendButton.disabled = false;
     input.focus();
+    // A Mesa aprende com a rodada: quem falhou sai da seleção e ganha uma
+    // etiqueta própria ("sem login", "sem saldo") na barra lateral.
+    await refreshProviders();
   }
 });
 
 input.addEventListener("input", () => {
   input.style.height = "auto";
   input.style.height = `${Math.min(input.scrollHeight, 160)}px`;
+  previewMode();
 });
-modeSelect.addEventListener("change", () => {
+
+function updateModeNote(auto) {
   modeNote.textContent = modeSelect.value === "fast"
     ? "Rápida pula a revisão cruzada. Os modelos continuam iguais; há menos uma rodada de comparação."
     : "Completa inclui revisão cruzada. Cada provedor usa a autenticação e os limites da sua conta.";
+  if (auto) modeNote.textContent += " Pergunta curta: apliquei o modo Rápido automaticamente.";
+}
+
+// Só age enquanto o usuário não fixou o modo no seletor.
+function previewMode() {
+  if (modePinned) return;
+  const wanted = input.value.trim().length <= MODO_RAPIDO_ATE ? "fast" : "complete";
+  if (modeSelect.value === wanted) return;
+  modeSelect.value = wanted;
+  updateModeNote(wanted === "fast");
+}
+
+modeSelect.addEventListener("change", () => {
+  // Escolha explícita: a partir daqui a Mesa não mexe mais no seletor.
+  modePinned = true;
+  updateModeNote(false);
 });
 input.addEventListener("keydown", event => {
   if (event.key === "Enter" && !event.shiftKey) {
@@ -501,8 +545,11 @@ input.addEventListener("keydown", event => {
 
 document.querySelector("#newChat").addEventListener("click", () => {
   state.history = [];
-  messages.innerHTML = "";
+  state.turns = [];
+  state.conversationId = null;
+  messages.replaceChildren();
   welcome.hidden = false;
+  renderHistory();
   input.focus();
 });
 document.querySelectorAll("[data-prompt]").forEach(button => {
@@ -513,18 +560,174 @@ document.querySelectorAll("[data-prompt]").forEach(button => {
   });
 });
 
-async function initialize() {
+// ------------------------------- Histórico -------------------------------
+// As conversas ficam em `historico.json`, na pasta do projeto. A Mesa só lê e
+// grava esse arquivo local; nada é enviado para fora do computador.
+
+function formatWhen(timestamp) {
+  const seconds = Math.max(0, Math.floor(Date.now() / 1000 - Number(timestamp || 0)));
+  if (seconds < 60) return "agora";
+  if (seconds < 3600) return `há ${Math.floor(seconds / 60)} min`;
+  if (seconds < 86400) return `há ${Math.floor(seconds / 3600)} h`;
+  if (seconds < 172800) return "ontem";
+  return new Date(timestamp * 1000).toLocaleDateString("pt-BR", {day: "2-digit", month: "2-digit"});
+}
+
+function renderHistory() {
+  if (!historyBox || !historyList) return;
+  const items = state.conversations || [];
+  historyList.replaceChildren();
+  historyBox.hidden = items.length === 0;
+  if (historyCount) {
+    historyCount.textContent = items.length ? `${items.length} ${items.length === 1 ? "conversa" : "conversas"}` : "";
+  }
+  for (const item of items) {
+    const row = document.createElement("div");
+    row.className = "history-item";
+    if (item.id === state.conversationId) row.classList.add("is-active");
+
+    const open = document.createElement("button");
+    open.type = "button";
+    open.className = "history-open";
+    const title = document.createElement("span");
+    title.className = "history-item-title";
+    title.textContent = item.title || "Conversa sem título";
+    const meta = document.createElement("small");
+    meta.className = "history-item-meta";
+    const count = Number(item.count || 0);
+    meta.textContent = `${count} ${count === 1 ? "mensagem" : "mensagens"} · ${formatWhen(item.updated)}`;
+    open.append(title, meta);
+    open.addEventListener("click", () => openConversation(item.id));
+
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "history-remove";
+    remove.title = "Apagar esta conversa";
+    remove.textContent = "×";
+    remove.addEventListener("click", () => removeConversation(item, remove));
+
+    row.append(open, remove);
+    historyList.append(row);
+  }
+}
+
+async function loadHistory() {
+  try {
+    const response = await fetch("/api/historico", {cache: "no-store"});
+    const data = await response.json();
+    if (response.ok && Array.isArray(data.conversations)) state.conversations = data.conversations;
+  } catch {
+    // O histórico é um extra: se ele falhar, a conversa em tela continua.
+  }
+  renderHistory();
+}
+
+async function openConversation(id) {
+  if (state.busy || !id) return;
+  try {
+    const response = await fetch(`/api/historico/${encodeURIComponent(id)}`, {cache: "no-store"});
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || "Não consegui abrir esta conversa");
+    messages.replaceChildren();
+    state.turns = [];
+    state.history = [];
+    for (const entry of data.messages || []) {
+      const text = String(entry.text || "");
+      if (entry.role === "user") {
+        addUserMessage(text);
+        state.turns.push({role: "user", text});
+        state.history.push({role: "user", content: text});
+      } else {
+        const notes = Array.isArray(entry.notes) ? entry.notes : [];
+        const provider = entry.provider || "";
+        addAnswer(text, provider, notes);
+        state.turns.push({role: "assistant", text, provider, notes});
+        state.history.push({role: "assistant", content: text});
+      }
+    }
+    state.history = state.history.slice(-12);
+    state.conversationId = data.id || id;
+    welcome.hidden = state.turns.length > 0;
+    conversation.scrollTop = 0;
+    renderHistory();
+    input.focus();
+  } catch (error) {
+    addError(error.message || "Não consegui abrir esta conversa");
+  }
+}
+
+async function removeConversation(item, button) {
+  const title = item.title || "esta conversa";
+  if (!window.confirm(`Apagar "${title}"? Não há como desfazer.`)) return;
+  button.disabled = true;
+  try {
+    const response = await fetch(`/api/historico/${encodeURIComponent(item.id)}`, {method: "DELETE"});
+    if (!response.ok) throw new Error("falhou");
+    if (state.conversationId === item.id) state.conversationId = null;
+  } catch {
+    button.disabled = false;
+  }
+  await loadHistory();
+}
+
+async function saveConversation() {
+  if (!state.turns.length) return;
+  try {
+    const response = await fetch("/api/historico", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        id: state.conversationId,
+        title: state.turns[0].text,
+        messages: state.turns,
+      }),
+    });
+    if (!response.ok) return;
+    const saved = await response.json();
+    if (saved && saved.id) state.conversationId = saved.id;
+  } catch {
+    // Sem histórico: a conversa em tela continua intacta.
+  }
+  await loadHistory();
+}
+
+function defaultSelection() {
+  const installed = state.providers.filter(provider => provider.installed);
+  const healthy = installed.filter(provider => !provider.last_error).map(provider => provider.id);
+  // Só deixa de marcar quem falhou se ainda sobrarem duas IAs para conversar.
+  return healthy.length >= 2 ? healthy : installed.map(provider => provider.id);
+}
+
+function applyProviders(payload) {
+  state.providers = payload.map(provider => pausedProviderIds.has(provider.id)
+    ? {...provider, installed: false, state: "Pausado por enquanto", reason: "Desativado temporariamente na Mesa. O programa continua instalado no computador."}
+    : provider);
+}
+
+async function refreshProviders(options = {}) {
   try {
     const response = await fetch("/api/providers", {cache: "no-store"});
     const data = await response.json();
-    state.providers = data.providers.map(provider => pausedProviderIds.has(provider.id)
-      ? {...provider, installed: false, state: "Pausado por enquanto", reason: "Desativado temporariamente na Mesa. O programa continua instalado no computador."}
-      : provider);
-    const installed = state.providers.filter(provider => provider.installed).map(provider => provider.id);
-    state.selected = new Set(installed);
+    applyProviders(data.providers || []);
+    if (options.keepSelection === false) {
+      state.selected = new Set(defaultSelection());
+    } else {
+      // Quem acabou de falhar sai da seleção — desde que sobrem duas IAs.
+      const failed = state.providers.filter(p => p.last_error && state.selected.has(p.id)).map(p => p.id);
+      const remaining = [...state.selected].filter(id => !failed.includes(id));
+      if (failed.length && remaining.length >= 2) state.selected = new Set(remaining);
+    }
     renderProviders();
+    return true;
   } catch {
+    return false;
+  }
+}
+
+async function initialize() {
+  if (!await refreshProviders({keepSelection: false})) {
     providerList.textContent = "Não foi possível conectar ao servidor local.";
   }
+  loadHistory();
 }
 initialize();
