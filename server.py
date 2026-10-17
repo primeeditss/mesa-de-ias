@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 import os
 import codecs
+import html
 import re
+import unicodedata
 import shutil
 import subprocess
 import tempfile
@@ -15,7 +17,7 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
-from urllib.parse import quote, unquote, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
 
 ROOT = Path(__file__).resolve().parent
@@ -913,6 +915,288 @@ def delete_conversation(conversation_id: str) -> bool:
     return True
 
 
+# --------------------------- Busca no histórico ---------------------------
+# A comparação ignora maiúsculas e acentos sem mudar o tamanho do texto (cada
+# caractere continua valendo um), então o trecho mostrado cai exatamente onde a
+# palavra foi encontrada. "orcamento" acha "orçamento", "PLANO" acha "plano".
+
+def _fold_char(character: str) -> str:
+    decomposed = unicodedata.normalize("NFD", character)
+    base = decomposed[0] if decomposed else character
+    return base if base.isascii() else character
+
+
+def fold_text(text: str) -> str:
+    """Minúsculas e sem acento, um caractere por caractere."""
+    if text.isascii():
+        return text.lower()
+    return "".join(_fold_char(character) for character in text).lower()
+
+
+def searchable_text(item: dict[str, Any]) -> str:
+    parts = [str(item.get("title", ""))]
+    for entry in item.get("messages") or []:
+        parts.append(str(entry.get("text", "")))
+        parts.append(str(entry.get("provider", "")))
+        for note in entry.get("notes") or []:
+            parts.append(str(note.get("provider", "")))
+            parts.append(str(note.get("summary", "")))
+    return "\n".join(parts)
+
+
+def match_excerpt(item: dict[str, Any], wanted: str, width: int = 120) -> str:
+    for entry in item.get("messages") or []:
+        text = " ".join(str(entry.get("text", "")).split())
+        position = fold_text(text).find(wanted)
+        if position < 0:
+            continue
+        start = max(0, position - width // 3)
+        end = min(len(text), start + width)
+        excerpt = text[start:end].strip()
+        return ("…" if start > 0 else "") + excerpt + ("…" if end < len(text) else "")
+    return ""
+
+
+def search_history(term: str) -> dict[str, Any]:
+    items = read_history()
+    wanted = fold_text(term.strip())
+    if not wanted:
+        return {"conversations": [history_summary(item) for item in items], "total": len(items)}
+    found = []
+    for item in items:
+        if wanted not in fold_text(searchable_text(item)):
+            continue
+        summary = history_summary(item)
+        summary["match"] = match_excerpt(item, wanted)
+        found.append(summary)
+    return {"conversations": found, "total": len(items), "term": term.strip()}
+
+
+# ------------------------ Exportar a conversa -----------------------------
+# O arquivo é montado aqui, e não no navegador: o mesmo link serve para baixar
+# direto, sem depender da tela aberta. Saem dois formatos: Markdown (para editar
+# ou colar em qualquer lugar) e uma página .html pronta para imprimir ou enviar.
+
+def provider_label(value: Any) -> str:
+    info = PROVIDERS.get(str(value or ""))
+    return str(info["label"]) if info else (str(value) if value else "Mesa")
+
+
+def readable_time(seconds: Any) -> str:
+    try:
+        return time.strftime("%d/%m/%Y às %H:%M", time.localtime(float(seconds or 0)))
+    except (OSError, ValueError, OverflowError, TypeError):
+        return ""
+
+
+def title_slug(item: dict[str, Any]) -> str:
+    base = re.sub(r"[^a-z0-9]+", "-", fold_text(str(item.get("title") or "conversa"))).strip("-")[:48].strip("-")
+    return f"mesa-{base}" if base else "mesa-conversa"
+
+
+def export_markdown(item: dict[str, Any]) -> str:
+    title = str(item.get("title") or "Conversa sem título")
+    entries = item.get("messages") or []
+    lines = [
+        f"# {title}",
+        "",
+        f"*Conversa da Mesa de IAs · {len(entries)} mensagens · {readable_time(item.get('updated'))}*",
+        "",
+        "---",
+        "",
+    ]
+    for entry in entries:
+        text = str(entry.get("text", "")).strip()
+        if entry.get("role") == "user":
+            lines += ["## Você", "", text, ""]
+            continue
+        lines += [f"## Resposta da mesa — {provider_label(entry.get('provider'))}", "", text, ""]
+        notes = [note for note in (entry.get("notes") or []) if str(note.get("summary", "")).strip()]
+        if notes:
+            lines += ["### Contribuições das IAs", ""]
+            for note in notes:
+                lines += [f"**{note.get('provider') or 'IA'}**", "", str(note.get("summary", "")).strip(), ""]
+        lines += ["---", ""]
+    lines += ["_Gerado pela Mesa de IAs neste computador._", ""]
+    return "\n".join(lines)
+
+
+EXPORT_CSS = """
+:root{color-scheme:light}
+*{box-sizing:border-box}
+body{margin:0;background:#f6f5f1;color:#20221f;font:15px/1.7 'DM Sans',-apple-system,'Segoe UI',Roboto,sans-serif}
+.doc{max-width:740px;margin:0 auto;padding:46px 26px 70px}
+header{border-bottom:1px solid #e8e7e1;padding-bottom:18px}
+.marca{display:flex;align-items:center;gap:9px;font:700 10.5px/1 'DM Mono',ui-monospace,monospace;letter-spacing:1.3px;text-transform:uppercase;color:#426b50}
+.marca i{display:grid;place-items:center;width:24px;height:24px;border-radius:8px;background:#426b50;color:#fff;font-size:15px;font-style:normal}
+h1{font-size:26px;line-height:1.28;letter-spacing:-.5px;margin:14px 0 8px}
+.meta{font:11.5px/1.5 'DM Mono',ui-monospace,monospace;color:#777a72}
+.turn{margin-top:32px}
+.rotulo{font:600 10px/1 'DM Mono',ui-monospace,monospace;letter-spacing:1.2px;text-transform:uppercase;color:#8a8d84;margin:0 0 9px}
+.ask{background:#eaede4;border:1px solid #e1e5db;border-radius:14px;padding:12px 15px;white-space:pre-wrap}
+.answer{background:#fff;border:1px solid #e8e7e1;border-radius:14px;padding:19px 21px;box-shadow:0 8px 30px rgba(36,42,33,.06)}
+.answer>.rotulo{color:#426b50}
+.notes{margin-top:16px;border-top:1px solid #e8e7e1;padding-top:13px}
+.notes>summary{cursor:pointer;color:#526d54;font:600 12.5px 'DM Sans',sans-serif}
+.note{margin-top:11px;background:#fafbf8;border:1px solid #eceee9;border-radius:10px;padding:11px 13px}
+.note h4{margin:0 0 7px;font:700 11px 'DM Sans',sans-serif;color:#4f634f;letter-spacing:.3px}
+.text>*:first-child{margin-top:0}
+.text>*:last-child{margin-bottom:0}
+.text p{margin:0 0 12px}
+.text h3,.text h4,.text h5,.text h6{margin:20px 0 9px;line-height:1.3;letter-spacing:-.2px}
+.text h3{font-size:17px}.text h4{font-size:15px}.text h5,.text h6{font-size:13.5px;color:#4f5a4d}
+.text ul,.text ol{padding-left:22px;margin:0 0 12px}
+.text li{margin:4px 0}
+.text li::marker{color:#426b50;font-weight:700}
+.text code{background:#f2f3ee;border:1px solid #e6e7e1;border-radius:5px;padding:1px 5px;font:12.5px 'DM Mono',ui-monospace,monospace}
+.text pre{background:#23241f;color:#eee7d9;border-radius:12px;padding:14px 16px;overflow:auto}
+.text pre code{background:none;border:0;padding:0;color:inherit;font-size:12.5px;line-height:1.6}
+.text blockquote{margin:0 0 12px;padding:2px 0 2px 14px;border-left:3px solid #cfd8c9;color:#5b6157}
+.text a{color:#3c6b4c}
+footer{margin-top:40px;padding-top:16px;border-top:1px solid #e8e7e1;font:11px 'DM Mono',ui-monospace,monospace;color:#94978f}
+@media print{body{background:#fff}.answer{box-shadow:none}}
+"""
+
+
+def escape_html(text: Any) -> str:
+    return html.escape(str(text or ""), quote=False)
+
+
+def inline_markdown(text: str) -> str:
+    output = escape_html(text)
+    output = re.sub(r"`([^`]+)`", r"<code>\1</code>", output)
+    output = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", output)
+    output = re.sub(r"(?<!\*)\*([^*]+)\*(?!\*)", r"<em>\1</em>", output)
+    output = re.sub(r"\[([^\]]+)\]\((https?://[^)\s]+)\)", r'<a href="\2" rel="noopener">\1</a>', output)
+    return output
+
+
+def markdown_to_html(text: Any) -> str:
+    """A mesma leitura de Markdown que a tela faz, só que gerando texto .html."""
+    lines = str(text or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    output: list[str] = []
+    paragraph: list[str] = []
+    list_tag: str | None = None
+    in_code = False
+    code_lines: list[str] = []
+
+    def flush_paragraph() -> None:
+        if paragraph:
+            output.append(f"<p>{inline_markdown(' '.join(paragraph))}</p>")
+            paragraph.clear()
+
+    def close_list() -> None:
+        nonlocal list_tag
+        if list_tag:
+            output.append(f"</{list_tag}>")
+            list_tag = None
+
+    for line in lines:
+        if line.strip().startswith("```"):
+            flush_paragraph()
+            close_list()
+            if in_code:
+                output.append(f"<pre><code>{escape_html(chr(10).join(code_lines))}</code></pre>")
+                code_lines.clear()
+                in_code = False
+            else:
+                in_code = True
+            continue
+        if in_code:
+            code_lines.append(line)
+            continue
+        if not line.strip():
+            flush_paragraph()
+            close_list()
+            continue
+        heading = re.match(r"^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$", line)
+        if heading:
+            flush_paragraph()
+            close_list()
+            level = min(6, len(heading.group(1)) + 2)
+            output.append(f"<h{level}>{inline_markdown(heading.group(2))}</h{level}>")
+            continue
+        bullet = re.match(r"^\s*(?:[-*+]\s+|(\d+)[.)]\s+)(.*)$", line)
+        if bullet:
+            flush_paragraph()
+            tag = "ol" if bullet.group(1) else "ul"
+            if list_tag != tag:
+                close_list()
+                output.append(f"<{tag}>")
+                list_tag = tag
+            output.append(f"<li>{inline_markdown(bullet.group(2))}</li>")
+            continue
+        quote = re.match(r"^\s*>\s?(.*)$", line)
+        if quote:
+            flush_paragraph()
+            close_list()
+            output.append(f"<blockquote>{inline_markdown(quote.group(1))}</blockquote>")
+            continue
+        paragraph.append(line.strip())
+    if in_code and code_lines:
+        output.append(f"<pre><code>{escape_html(chr(10).join(code_lines))}</code></pre>")
+    flush_paragraph()
+    close_list()
+    return "\n".join(output)
+
+
+def export_html(item: dict[str, Any]) -> str:
+    title = str(item.get("title") or "Conversa sem título")
+    entries = item.get("messages") or []
+    when = escape_html(readable_time(item.get("updated")))
+    parts = [
+        "<!DOCTYPE html>",
+        '<html lang="pt-BR">',
+        "<head>",
+        '<meta charset="utf-8">',
+        '<meta name="viewport" content="width=device-width,initial-scale=1">',
+        f"<title>{escape_html(title)}</title>",
+        f"<style>{EXPORT_CSS}</style>",
+        "</head>",
+        "<body>",
+        '<main class="doc">',
+        "<header>",
+        '<div class="marca"><i>✳</i> Mesa de IAs</div>',
+        f"<h1>{escape_html(title)}</h1>",
+        f'<div class="meta">{len(entries)} mensagens · {when}</div>',
+        "</header>",
+    ]
+    for entry in entries:
+        if entry.get("role") == "user":
+            parts += [
+                '<section class="turn">',
+                '<p class="rotulo">Você</p>',
+                f'<div class="ask">{escape_html(entry.get("text"))}</div>',
+                "</section>",
+            ]
+            continue
+        parts += [
+            '<section class="turn">',
+            f'<p class="rotulo">Resposta da mesa — {escape_html(provider_label(entry.get("provider")))}</p>',
+            f'<article class="answer"><div class="text">{markdown_to_html(entry.get("text"))}</div>',
+        ]
+        notes = [note for note in (entry.get("notes") or []) if str(note.get("summary", "")).strip()]
+        if notes:
+            parts.append('<details class="notes" open><summary>Contribuições das IAs</summary>')
+            for note in notes:
+                parts += [
+                    '<div class="note">',
+                    f"<h4>{escape_html(note.get('provider') or 'IA')}</h4>",
+                    f'<div class="text">{markdown_to_html(note.get("summary"))}</div>',
+                    "</div>",
+                ]
+            parts.append("</details>")
+        parts += ["</article>", "</section>"]
+    parts += [
+        f"<footer>Gerado pela Mesa de IAs neste computador · {when}</footer>",
+        "</main>",
+        "</body>",
+        "</html>",
+        "",
+    ]
+    return "\n".join(parts)
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "MesaIAs/1.0"
 
@@ -928,17 +1212,44 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def send_export(self, conversation_id: str, query: dict[str, list[str]]) -> None:
+        item = next((entry for entry in read_history() if str(entry.get("id")) == conversation_id), None)
+        if not item:
+            self.send_json(404, {"error": "Conversa não encontrada"})
+            return
+        fmt = (query.get("formato", ["md"])[0] or "md").strip().lower()
+        if fmt not in ("md", "html"):
+            self.send_json(400, {"error": "Formato de exportação desconhecido"})
+            return
+        if fmt == "html":
+            body = export_html(item).encode("utf-8")
+            content_type = "text/html; charset=utf-8"
+        else:
+            body = export_markdown(item).encode("utf-8")
+            content_type = "text/markdown; charset=utf-8"
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Content-Disposition", f'attachment; filename="{title_slug(item)}.{fmt}"')
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
         if parsed.path == "/api/providers":
             self.send_json(200, {"providers": provider_status()})
             return
         if parsed.path == "/api/historico":
-            self.send_json(200, {"conversations": [history_summary(item) for item in read_history()]})
+            term = (parse_qs(parsed.query).get("busca", [""])[0] or "").strip()
+            self.send_json(200, search_history(term))
             return
         if parsed.path.startswith("/api/historico/"):
-            conversation_id = unquote(parsed.path.removeprefix("/api/historico/"))
-            found = next((item for item in read_history() if str(item.get("id")) == conversation_id), None)
+            rest = unquote(parsed.path.removeprefix("/api/historico/"))
+            if rest.endswith("/exportar"):
+                self.send_export(rest[: -len("/exportar")], parse_qs(parsed.query))
+                return
+            found = next((item for item in read_history() if str(item.get("id")) == rest), None)
             if not found:
                 self.send_json(404, {"error": "Conversa não encontrada"})
                 return

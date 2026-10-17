@@ -16,9 +16,14 @@ const state = {
   turns: [],
   conversationId: null,
   conversations: [],
+  historyTotal: 0,
+  search: "",
   busy: false,
   providersRendered: false,
 };
+
+let searchTimer = 0;
+let exportMenuId = null;
 
 const providerList = document.querySelector("#providerList");
 const synthesizer = document.querySelector("#synthesizer");
@@ -35,6 +40,8 @@ const heroRosterText = document.querySelector("#heroRosterText");
 const historyBox = document.querySelector("#historyBox");
 const historyList = document.querySelector("#historyList");
 const historyCount = document.querySelector("#historyCount");
+const historySearch = document.querySelector("#historySearch");
+const historySearchClear = document.querySelector("#historySearchClear");
 
 function providerStateKind(provider) {
   if (/pausad/i.test(provider.state || "")) return "paused";
@@ -684,10 +691,17 @@ function formatWhen(timestamp) {
 function renderHistory() {
   if (!historyBox || !historyList) return;
   const items = state.conversations || [];
+  const searching = Boolean(state.search);
   historyList.replaceChildren();
-  historyBox.hidden = items.length === 0;
+  // Procurando, a caixa continua visível mesmo sem resultado — é lá que a
+  // pessoa desfaz a busca.
+  historyBox.hidden = items.length === 0 && !searching;
   if (historyCount) {
-    historyCount.textContent = items.length ? `${items.length} ${items.length === 1 ? "conversa" : "conversas"}` : "";
+    if (searching) {
+      historyCount.textContent = items.length ? `${items.length} de ${state.historyTotal || items.length}` : "nenhuma";
+    } else {
+      historyCount.textContent = items.length ? `${items.length} ${items.length === 1 ? "conversa" : "conversas"}` : "";
+    }
   }
   for (const item of items) {
     const row = document.createElement("div");
@@ -705,7 +719,26 @@ function renderHistory() {
     const count = Number(item.count || 0);
     meta.textContent = `${count} ${count === 1 ? "mensagem" : "mensagens"} · ${formatWhen(item.updated)}`;
     open.append(title, meta);
+    if (item.match) {
+      // O trecho vem do servidor: é o pedaço do texto onde a busca bateu.
+      const match = document.createElement("small");
+      match.className = "history-item-match";
+      match.textContent = item.match;
+      open.append(match);
+    }
     open.addEventListener("click", () => openConversation(item.id));
+
+    const save = document.createElement("button");
+    save.type = "button";
+    save.className = "history-save";
+    save.title = "Salvar uma cópia desta conversa";
+    save.setAttribute("aria-label", `Salvar uma cópia de ${item.title || "conversa"}`);
+    save.setAttribute("aria-expanded", String(exportMenuId === item.id));
+    save.textContent = "⤓";
+    save.addEventListener("click", () => {
+      exportMenuId = exportMenuId === item.id ? null : item.id;
+      renderHistory();
+    });
 
     const remove = document.createElement("button");
     remove.type = "button";
@@ -714,20 +747,83 @@ function renderHistory() {
     remove.textContent = "×";
     remove.addEventListener("click", () => removeConversation(item, remove));
 
-    row.append(open, remove);
+    row.append(open, save, remove);
     historyList.append(row);
+    if (exportMenuId === item.id) historyList.append(buildExportMenu(item));
+  }
+  if (!items.length && searching) {
+    const empty = document.createElement("p");
+    empty.className = "history-empty";
+    empty.textContent = `Nada encontrado para “${state.search}”. Tente outra palavra.`;
+    historyList.append(empty);
   }
 }
 
-async function loadHistory() {
+// Menu do botão "salvar cópia": dois formatos, cada um explicado numa linha.
+// São links de verdade (não chamadas de script): o navegador cuida do download
+// com o nome que o servidor já mandou pronto.
+function buildExportMenu(item) {
+  const options = [
+    {format: "md", mark: "#", title: "Documento de texto", note: "arquivo .md para editar ou colar em qualquer lugar"},
+    {format: "html", mark: "◫", title: "Página pronta", note: "arquivo .html que abre no navegador, bom para imprimir ou enviar"},
+  ];
+  const menu = document.createElement("div");
+  menu.className = "history-export-menu";
+  for (const option of options) {
+    const link = document.createElement("a");
+    link.className = "history-export-option";
+    link.href = `/api/historico/${encodeURIComponent(item.id)}/exportar?formato=${option.format}`;
+    link.download = "";
+    const mark = document.createElement("span");
+    mark.className = "history-export-mark";
+    mark.textContent = option.mark;
+    const copy = document.createElement("span");
+    copy.className = "history-export-copy";
+    const strong = document.createElement("b");
+    strong.textContent = option.title;
+    const small = document.createElement("small");
+    small.textContent = option.note;
+    copy.append(strong, small);
+    link.append(mark, copy);
+    // Fecha o menu depois que o download começou (daí o atraso de um quadro).
+    link.addEventListener("click", () => window.setTimeout(() => {
+      exportMenuId = null;
+      renderHistory();
+    }, 0));
+    menu.append(link);
+  }
+  return menu;
+}
+
+// Fecha o menu de exportação ao clicar em qualquer outro lugar.
+document.addEventListener("click", event => {
+  if (!exportMenuId) return;
+  const target = event.target;
+  if (target instanceof Element && (target.closest(".history-export-menu") || target.closest(".history-save"))) return;
+  exportMenuId = null;
+  renderHistory();
+});
+
+async function loadHistory(term = state.search) {
+  state.search = String(term || "").trim();
+  const url = state.search ? `/api/historico?busca=${encodeURIComponent(state.search)}` : "/api/historico";
   try {
-    const response = await fetch("/api/historico", {cache: "no-store"});
+    const response = await fetch(url, {cache: "no-store"});
     const data = await response.json();
-    if (response.ok && Array.isArray(data.conversations)) state.conversations = data.conversations;
+    if (response.ok && Array.isArray(data.conversations)) {
+      state.conversations = data.conversations;
+      state.historyTotal = Number(data.total || data.conversations.length);
+    }
   } catch {
     // O histórico é um extra: se ele falhar, a conversa em tela continua.
   }
   renderHistory();
+}
+
+function setHistorySearch(term) {
+  if (historySearch) historySearch.value = term;
+  if (historySearchClear) historySearchClear.hidden = !term;
+  loadHistory(term);
 }
 
 async function openConversation(id) {
@@ -838,5 +934,26 @@ async function initialize() {
   }
   loadHistory();
   iniciarControleDeScroll();
+}
+
+// Busca no histórico: espera a pessoa parar de digitar antes de perguntar ao
+// servidor, e o Esc limpa tudo de uma vez.
+if (historySearch) {
+  historySearch.addEventListener("input", () => {
+    if (historySearchClear) historySearchClear.hidden = !historySearch.value;
+    window.clearTimeout(searchTimer);
+    searchTimer = window.setTimeout(() => loadHistory(historySearch.value), 220);
+  });
+  historySearch.addEventListener("keydown", event => {
+    if (event.key !== "Escape") return;
+    event.preventDefault();
+    setHistorySearch("");
+  });
+}
+if (historySearchClear) {
+  historySearchClear.addEventListener("click", () => {
+    setHistorySearch("");
+    if (historySearch) historySearch.focus();
+  });
 }
 initialize();

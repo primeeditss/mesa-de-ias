@@ -243,6 +243,31 @@ body:before{display:none}.topbar{backdrop-filter:none;background:rgba(24,23,18,.
 .history-remove:hover{background:rgba(217,120,96,.16);color:#e9a58e}
 .history-remove:disabled{opacity:.4;cursor:wait}
 
+/* ===== Opção C · buscar e salvar cópias =====
+   A busca pergunta ao servidor (que enxerga o texto inteiro das conversas) e o
+   botão ⤓ abre os dois formatos de arquivo. O visual segue o tema noite.      */
+.history-search{display:flex;align-items:center;gap:6px;height:30px;padding:0 10px 0 9px;border:1px solid rgba(150,132,95,.28);border-radius:9px;background:rgba(20,19,15,.45);transition:border-color .3s ease,background .3s ease}
+.history-search:focus-within{border-color:rgba(221,194,139,.55);background:rgba(20,19,15,.7)}
+.history-search-icon{flex:none;color:#8d8574;font-size:13px;line-height:1}
+.history-search input{flex:1 1 auto;min-width:0;padding:0;border:0;background:transparent;outline:none;color:#efe6d5;font:12px 'DM Sans',sans-serif}
+.history-search input::placeholder{color:#8d8574}
+.history-search input::-webkit-search-cancel-button{display:none}
+.history-search button{flex:none;width:18px;height:18px;border:0;border-radius:50%;background:transparent;color:#8d8574;font:13px/1 'DM Sans',sans-serif;cursor:pointer;transition:background .3s ease,color .3s ease}
+.history-search button:hover{background:rgba(221,194,139,.16);color:#fff1d5}
+.history-item-match{margin-top:2px;font-size:10.5px;font-style:italic;line-height:1.45;color:#a8a08d;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.history-save{flex:none;align-self:center;width:26px;height:26px;border:0;border-radius:8px;background:transparent;color:#8d8574;font:14px/1 'DM Sans',sans-serif;cursor:pointer;opacity:0;transition:opacity .3s ease,background .3s ease,color .3s ease}
+.history-item:hover .history-save,.history-save:focus-visible,.history-save[aria-expanded="true"]{opacity:1}
+.history-save:hover,.history-save[aria-expanded="true"]{background:rgba(221,194,139,.16);color:#f0dcb4}
+.history-export-menu{margin:5px 0 7px;display:grid;gap:4px;padding:7px;border:1px solid rgba(150,132,95,.32);border-radius:11px;background:linear-gradient(160deg,rgba(43,41,32,.96),rgba(31,30,24,.96));box-shadow:0 14px 30px rgba(0,0,0,.3)}
+.history-export-option{box-sizing:border-box;display:flex;align-items:flex-start;gap:9px;width:100%;padding:7px 8px;border:0;border-radius:8px;background:transparent;color:#efe6d5;text-decoration:none;cursor:pointer;text-align:left;transition:background .3s ease}
+.history-export-option:hover{background:rgba(221,194,139,.12)}
+.history-export-option:focus-visible{outline:2px solid rgba(221,194,139,.5);outline-offset:1px}
+.history-export-mark{flex:none;width:22px;height:22px;display:grid;place-items:center;border-radius:7px;background:rgba(221,194,139,.14);color:#e3c78f;font:600 12px 'DM Mono',monospace}
+.history-export-copy{display:flex;flex-direction:column;gap:2px;min-width:0}
+.history-export-copy b{font-size:12px;font-weight:600;color:#f2ead9}
+.history-export-copy small{font-size:10px;line-height:1.4;color:#9d9481}
+.history-empty{margin:6px 11px 2px;font-size:11px;line-height:1.5;color:#9d9481}
+
 /* ===== Item 7 · controle de rolagem do chat =====
    A barra nativa fica escondida apenas na conversa: o controle flutuante mostra
    a posição e faz o papel de barra (arrastar o polegar, clicar na trilha, setas

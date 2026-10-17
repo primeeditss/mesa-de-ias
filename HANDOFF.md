@@ -25,6 +25,7 @@ resposta final.
 - ✅ Síntese entregue a uma IA que já respondeu, sem chamada perdida
 - ✅ Modo Rápido automático em perguntas curtas (até 120 caracteres)
 - ✅ Histórico de conversas em `historico.json`, com seção própria na barra lateral
+- ✅ Busca no histórico (ignora acento e maiúscula) e exportação da conversa em `.md` ou `.html`
 
 ## O que precisa ser feito
 
@@ -76,6 +77,30 @@ Medido com "Responda apenas: OK" (Gemini + OpenRouter): ~7 s, contra ~50 s antes
 Medido numa janela de 656 px de altura: `.main` fica com 656 px (antes esticava para 4102 px)
 e a conversa, com 8446 px de conteúdo, rola até o fim (0 → 400 → 8446).
 
+## Quarta rodada — guardar e achar (Opção C: buscar + exportar)
+
+1. ✅ **Buscar no histórico**: `GET /api/historico?busca=...` filtra as conversas pelo texto
+   inteiro — título, mensagens e contribuições — e devolve um `match` com o trecho onde a
+   palavra apareceu. `fold_text()` compara em minúsculas e sem acento **sem mudar o tamanho do
+   texto** (decompõe cada caractere e tira só o acento), então "orcamento" acha "orçamento" e o
+   trecho cai exatamente no ponto encontrado. Sem `busca`, a rota responde como antes.
+2. ✅ **Exportar a conversa**: `GET /api/historico/<id>/exportar?formato=md|html` monta o
+   arquivo no servidor e entrega como download (`Content-Disposition`), com nome vindo do
+   título e sem acentos nem cedilha (`title_slug()`). O Markdown é a versão canônica (título,
+   data, cada pergunta, cada resposta e as contribuições). O HTML é um documento único, com o
+   CSS embutido em tom claro de papel e `@media print` — pensado para imprimir ou enviar —
+   e o Markdown das respostas é convertido por `markdown_to_html()` (títulos, listas, negrito,
+   itálico, código, citação e links), com `html.escape` em tudo que vem dos modelos.
+3. ✅ **Na tela**: caixa de busca no topo do Histórico (contador "3 de 12", trecho do encontro
+   em itálico, aviso de "nada encontrado" e limpar pelo `×` ou Esc) e o botão `⤓` em cada
+   conversa, que abre as duas opções de arquivo. As opções são **links de verdade**
+   (`<a download>`): quem baixa é o navegador, com o nome que o servidor mandou.
+
+Testado com 40 verificações automáticas no `server.py` (busca com e sem acento, os dois
+formatos, 404 de id inexistente, 400 de formato desconhecido, HTML sem `script` injetado e a
+lista sem busca inalterada) e no navegador (busca, limpar, abrir o menu e baixar os dois
+arquivos: `.md` de 658 bytes e `.html` de 4047 bytes, com os nomes certos).
+
 ## Decisões técnicas
 
 - **Gemini**: API do Google AI Studio, chave `GEMINI_API_KEY` no `.env`.
@@ -98,6 +123,14 @@ e a conversa, com 8446 px de conteúdo, rola até o fim (0 → 400 → 8446).
   `{"version": 1, "conversations": [...]}`, mais recente primeiro. O frontend é quem monta a
   conversa (o servidor não sabe o que é um "turno"); o servidor só valida, corta tamanhos
   (`_clean_history_entry()`) e grava. Apagar só acontece por ação explícita (`DELETE`).
+- **Busca**: feita no servidor, não na tela, porque só o `historico.json` tem o texto inteiro
+  das conversas (a lista da barra lateral guarda apenas títulos e contagens). A dobra de
+  acentos é **caractere por caractere** de propósito: preserva os índices, o que permite
+  recortar o trecho exato onde a palavra foi encontrada.
+- **Exportação**: montada no servidor, e não no navegador, para o mesmo link servir de download
+  sem a Mesa estar aberta. O Markdown é o formato canônico; o HTML sai em tom claro de papel,
+  mesmo com o app escuro, porque é o que funciona ao imprimir e ao enviar. O CSS do HTML é uma
+  versão reduzida do tema, embutida no próprio arquivo.
 
 ## Progresso (git)
 
@@ -105,6 +138,8 @@ e a conversa, com 8446 px de conteúdo, rola até o fim (0 → 400 → 8446).
 - `ce377ca` — item 3 (animações suaves)
 - itens 4 e 5 (visual aconchegante + provedores reativados) — `git log --oneline` mostra o hash
 - rodada 2 (rapidez + histórico) — `git log --oneline` mostra o hash
+- rodada 3 (rolagem) — `4df6333` no projeto e `dd9e27b` no espelho
+- rodada 4 (busca no histórico + exportar em `.md`/`.html`) — `git log --oneline` mostra o hash
 
 Cada pasta tem o próprio repositório Git: a pasta de trabalho (esta) e o espelho em
 `C:\Users\aceli\OneDrive\Documentos\Projeto Padrão`. As duas ficam com o mesmo conteúdo.
@@ -126,3 +161,5 @@ Cada pasta tem o próprio repositório Git: a pasta de trabalho (esta) e o espel
   rotas do histórico). Alterações em `static/` aparecem só recarregando a página (Ctrl+F5).
 - A memória de falhas começa vazia a cada arranque: a primeira pergunta depois de reiniciar
   ainda pode chamar um CLI quebrado (e então ele fica etiquetado e fora da seleção).
+- Os arquivos exportados caem na pasta de downloads do navegador, com o nome
+  `mesa-<assunto>.<md|html>`; nenhum arquivo é criado na pasta do projeto.

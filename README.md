@@ -36,6 +36,15 @@ Com isso, uma pergunta simples respondida por Gemini e OpenRouter cai de ~50 s p
 
 Cada conversa concluída é gravada em `historico.json`, na pasta do projeto, com as 50 mais recentes primeiro. A seção **Histórico** da barra lateral mostra o título, quantas mensagens tem e quando foi a última vez; clicar reabre a conversa no meio da tela e permite continuar de onde parou, com o contexto das mensagens anteriores. O `×` apaga uma conversa, com confirmação.
 
+A **busca** logo acima da lista procura no texto inteiro das conversas — título, perguntas, respostas e contribuições — e ignora maiúsculas e acentos: digitar `orcamento` encontra "orçamento". Os resultados mostram em itálico o trecho onde a palavra apareceu e o contador passa a dizer quantas de quantas conversas combinam ("3 de 12"). O `×` da caixa, ou a tecla Esc, limpam a busca.
+
+O botão `⤓` de cada conversa **salva uma cópia** na pasta de downloads do navegador, com o nome `mesa-<assunto da conversa>`, em dois formatos:
+
+- **Documento de texto (`.md`)** — título, data, cada pergunta, cada resposta e as contribuições. Abre em qualquer editor, no VS Code ou no GitHub, e serve para colar em outro lugar.
+- **Página pronta (`.html`)** — um arquivo único, com o estilo embutido e fundo claro, que abre no navegador sem precisar da Mesa. É o formato bom para **imprimir** ou enviar a alguém.
+
+Nos dois casos nada sai do computador: o arquivo é montado pelo próprio servidor local.
+
 O arquivo é gravado de forma atômica (escreve num temporário e troca), então fechar o servidor no meio da gravação não corrompe o JSON — e ele fica fora do Git pelo `.gitignore`. Só texto é salvo: o raciocínio privado dos modelos não entra no arquivo, como também não aparece na tela.
 
 ## Requisitos
