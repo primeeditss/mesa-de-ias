@@ -27,6 +27,7 @@ resposta final.
 - ✅ Histórico de conversas em `historico.json`, com seção própria na barra lateral
 - ✅ Busca no histórico (ignora acento e maiúscula) e exportação da conversa em `.md` ou `.html`
 - ✅ Painel de confiança: "Testar minhas IAs" (tempo e motivo de cada uma) e cronômetro por IA na rodada
+- ✅ Respostas completas de cada IA, "lado a lado" (Opção A1) — sem o corte de 1.400 caracteres
 
 ## O que precisa ser feito
 
@@ -133,6 +134,39 @@ a IA que passa do prazo e os cronômetros da rodada) e no navegador (botão, lin
 a uma, tempos, etiquetas na lista de IAs, abrir/fechar sem chamada nova e o rodapé da resposta
 com uma IA falhando e outra demorando 9 s).
 
+## Sexta rodada — respostas completas, lado a lado (Opção A1)
+
+1. ✅ **Fim do corte de 1.400 caracteres**: o texto de cada IA ia para a tela e para o histórico
+   cortado em 1.400. Agora vai inteiro, no campo `text`, com um teto único de segurança —
+   `MAX_NOTE_CHARS = 20.000` (≈10 páginas) — usado **nos dois lugares**, para a conversa
+   reaberta mostrar exatamente o que apareceu na tela. Uma resposta fora do normal para no teto
+   em vez de travar o desenho ou engordar o arquivo.
+2. ✅ **Campo renomeado com respeito ao que já existe**: `summary` virou `text` (o nome antigo
+   mentia: não era resumo nenhum). As conversas gravadas antes desta rodada continuam abrindo:
+   `note_text()` lê `text` e, quando não há, cai no `summary`. Testado de propósito com uma
+   conversa no formato antigo (busca, abrir e exportar).
+3. ✅ **Botão "Ver as N respostas lado a lado"**: em cada resposta final, o antigo "Ver
+   contribuições" deu lugar a um botão que abre um painel com as respostas completas de cada IA
+   em **colunas** (`grid` com `auto-fit`, mínimo de 320 px por coluna). Quando não cabe lado a
+   lado — janela estreita ou muitas IAs — as colunas se empilham sozinhas, sem virar texto
+   ilegível. Com 3 IAs e a largura normal da conversa (800 px) são 2 colunas de ~372 px.
+4. ✅ **Dois jeitos de ler, e a escolha é lembrada**: dentro do painel, `▥ Lado a lado` (padrão)
+   e `☰ Uma após a outra`; a preferência vale para a sessão inteira. O `×` fecha e devolve o
+   foco ao botão. Abrir, fechar e trocar de modo **não gastam cota**: o texto já veio junto com
+   a resposta final (confirmado no navegador: um único `POST /api/chat` na rodada inteira).
+5. ✅ **A busca agora mostra onde achou**: quando a palavra estava dentro de uma contribuição, a
+   conversa aparecia na lista **sem o trecho** (`match_excerpt()` só olhava a resposta final).
+   Agora o trecho também vem das contribuições — defeito antigo da Opção C, achado pelo teste
+   desta rodada.
+
+Testado com 42 verificações automáticas no `server.py` (as IAs são **substituídas por respostas
+falsas**, com um marcador no fim de cada texto: nenhuma cota gasta; cobre o texto inteiro na
+rodada, no histórico, na busca e nas duas exportações, o teto de 20.000, a compatibilidade com o
+formato antigo e os arquivos da tela) e no navegador (resposta de 3.163 caracteres chegando
+inteira, botão com a contagem certa, painel abrindo, 3 contribuições, colunas medidas em
+3 × 361 px numa largura de 1.180 px, modo empilhado, fechar devolvendo o foco, reabrir sem
+chamada nova, conversa reaberta do histórico com o texto inteiro e console sem erro).
+
 ## Decisões técnicas
 
 - **Gemini**: API do Google AI Studio, chave `GEMINI_API_KEY` no `.env`.
@@ -174,6 +208,20 @@ com uma IA falhando e outra demorando 9 s).
 - **Cronômetros**: `provider_seconds` guarda o tempo da **rodada inicial** (é o número que
   interessa para confiar numa IA) e `synth_seconds`, o da síntese. O tempo da revisão cruzada
   aparece no texto do cartão de progresso, mas não substitui o da resposta.
+- **Um teto só para o texto**: `MAX_NOTE_CHARS` (20.000) vale para a contribuição na tela **e**
+  no histórico. Teto diferente em cada lado faria a conversa reaberta mostrar menos do que foi
+  visto ao vivo — o que qualquer pessoa leria como defeito.
+- **`text` no lugar de `summary`**: o texto das contribuições sempre foi a resposta inteira da
+  IA (nunca um resumo). `note_text()` centraliza a leitura e aceita o nome antigo, então nada
+  precisa ser migrado no `historico.json`; a primeira gravação de cada conversa já sai no
+  formato novo.
+- **Lado a lado sem rolagem interna**: as colunas crescem junto com a página (sem `overflow`
+  próprio) — quem rola é a conversa, que já tem o controle da rodada 3. Colunas com rolagem
+  própria disputariam o gesto de rolar no trackpad.
+- **A A1 não mexeu na síntese**: o `synth_prompt` continua pedindo uma resposta só, sem repetir
+  as contribuições uma por uma. Quem quer comparar e ouvir cada voz usa o painel novo; a A2
+  (síntese estruturada, com concordâncias, divergências e quem sustenta cada ponto) fica para
+  depois, quando houver mais de duas IAs respondendo.
 
 ## Progresso (git)
 
@@ -184,6 +232,7 @@ com uma IA falhando e outra demorando 9 s).
 - rodada 3 (rolagem) — `4df6333` no projeto e `dd9e27b` no espelho
 - rodada 4 (busca no histórico + exportar em `.md`/`.html`) — `git log --oneline` mostra o hash
 - rodada 5 (testar as IAs + cronômetros) — `git log --oneline` mostra o hash
+- rodada 6 (respostas completas lado a lado) — `git log --oneline` mostra o hash
 
 Cada pasta tem o próprio repositório Git: a pasta de trabalho (esta) e o espelho em
 `C:\Users\aceli\OneDrive\Documentos\Projeto Padrão`. As duas ficam com o mesmo conteúdo.
@@ -211,3 +260,41 @@ Cada pasta tem o próprio repositório Git: a pasta de trabalho (esta) e o espel
   rodapé de confiança (os cronômetros valem para a rodada que acabou de acontecer).
 - O resultado do teste também é temporário: fecha com `×`, "Nova conversa" ou recarregando a
   página. Quem guarda a informação para valer são as etiquetas na lista de IAs.
+- As respostas completas viajam inteiras até 20.000 caracteres por IA (`MAX_NOTE_CHARS`). Acima
+  disso — o que não é uma resposta normal — o fim é cortado, para o arquivo e a tela não
+  sofrerem. O número está num lugar só, então mudar o teto é mexer numa linha.
+
+## Retomar as IAs (3 passos, quando você quiser)
+
+1. **Logins dos CLIs**: no terminal, `claude` → `/login` e `cursor-agent login`.
+2. **Ollama**: abrir o aplicativo (ele responde por HTTP em `http://127.0.0.1:11434`).
+3. **Conferir**: clicar em "Testar minhas IAs" e ler o cartão. O Codex está com limite até
+   **11/11/2026 16:56** (não adianta tentar antes disso) e o Qwen Code pede `/auth` dentro dele.
+
+Enquanto isso, a Mesa conversa com duas IAs (**Gemini + OpenRouter**): o app funciona de ponta a
+ponta, mas a "sala de debate" (Opção A2) só passa a valer com três ou mais respondendo.
+
+## Fecho da sessão (17/10/2026)
+
+**Pronto e testado**: itens 1–5 do HANDOFF e as rodadas 2 a 6 — barra lateral organizada,
+Gemini/Ollama por HTTP, animações, visual aconchegante, provedores reativados, rapidez +
+histórico, rolagem, buscar/exportar (Opção C), testar as IAs + cronômetros (Opção B) e as
+respostas completas lado a lado (Opção A1). A Mesa é usável de ponta a ponta hoje.
+
+**O que falta, em ordem de valor:**
+
+1. **Recuperar as IAs** (hoje só Gemini e OpenRouter respondem — duas vozes): os 3 passos da
+   seção acima.
+2. **Opção A2 — sala de debate de verdade**: com 3+ IAs respondendo, a resposta final ganha
+   blocos fixos — onde concordam, onde divergem, o que só uma trouxe e quem sustenta cada ponto.
+   Depende de o modelo obedecer ao formato, por isso ficou para depois de usar o app alguns dias.
+3. **Opção D — provedor compatível com OpenAI**: o `.env` tem 5 chaves que nenhuma linha do
+   projeto lê (`OMNIROUTE_API_KEY`, `ZEN_API_KEY`, `ZEN_BASE_URL`, `ZEN_MODEL=deep.free`,
+   `PLANNER_PROVIDER`). Uma opção é dar à Mesa um provedor genérico "compatível com OpenAI"
+   (`base_url` + chave + modelo), o que destravaria qualquer serviço novo sem mexer no código.
+
+**Como retomar**: comece a conversa entregando este arquivo. Ele conta o estado, as decisões e as
+armadilhas conhecidas — em especial: `server.py` só vale depois de **reiniciar o servidor**;
+`static/` aparece com **Ctrl+F5**; conversas no formato antigo continuam abrindo; e as duas
+pastas (esta e o espelho) andam juntas, sempre com o mesmo conteúdo.
+

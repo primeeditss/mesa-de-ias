@@ -26,6 +26,11 @@ HOST = "127.0.0.1"
 PORT = 8765
 TIMEOUT_SECONDS = 240
 MAX_JOBS = 30
+# Opção A1: a resposta de cada IA viaja inteira — para a tela e para o histórico.
+# O número abaixo é só uma trava de segurança (≈10 páginas) para uma resposta
+# fora do normal não engordar o arquivo nem travar o desenho. É o mesmo teto nos
+# dois lugares, para a conversa reaberta mostrar exatamente o que apareceu na tela.
+MAX_NOTE_CHARS = 20000
 
 # Gemini and Ollama are reached through their HTTP APIs instead of spawning a
 # terminal process. Streaming straight from the API removes the slow CLI startup
@@ -859,7 +864,7 @@ def orchestrate(job_id: str, message: str, history: list[dict[str, str]],
             participants=[PROVIDERS[p]["label"] for p in selected],
             unavailable={PROVIDERS[p]["label"]: e for p, e in first_errors.items()},
             notes=[
-                {"provider": PROVIDERS[p]["label"], "summary": text[:1400]}
+                {"provider": PROVIDERS[p]["label"], "text": text[:MAX_NOTE_CHARS]}
                 for p, text in synthesis_source.items()
             ],
             warnings=review_errors,
@@ -983,6 +988,18 @@ def installed_provider_ids() -> list[str]:
 # As conversas ficam em `historico.json`, nesta pasta. Nada sai do computador:
 # o arquivo é escrito localmente e lido de volta quando você abre o Histórico.
 
+def note_text(note: Any) -> str:
+    """O texto de uma contribuição, venha ele do formato novo ou do antigo.
+
+    Até a Opção A1 esse texto vinha cortado em 1.400 caracteres e morava no campo
+    `summary`. Hoje ele vem completo no campo `text`; `summary` continua sendo
+    aceito para as conversas gravadas antes da mudança abrirem normalmente.
+    """
+    if not isinstance(note, dict):
+        return ""
+    return str(note.get("text") or note.get("summary") or "")
+
+
 def _clean_history_entry(raw: Any) -> dict[str, Any] | None:
     """Aceita só o que a Mesa sabe desenhar de volta na tela."""
     if not isinstance(raw, dict):
@@ -990,7 +1007,7 @@ def _clean_history_entry(raw: Any) -> dict[str, Any] | None:
     role = str(raw.get("role", ""))
     if role not in ("user", "assistant"):
         return None
-    entry: dict[str, Any] = {"role": role, "text": str(raw.get("text", ""))[:20000]}
+    entry: dict[str, Any] = {"role": role, "text": str(raw.get("text", ""))[:MAX_NOTE_CHARS]}
     if role == "assistant":
         entry["provider"] = str(raw.get("provider", ""))[:60]
         notes = []
@@ -998,7 +1015,7 @@ def _clean_history_entry(raw: Any) -> dict[str, Any] | None:
             if isinstance(note, dict) and len(notes) < 12:
                 notes.append({
                     "provider": str(note.get("provider", ""))[:60],
-                    "summary": str(note.get("summary", ""))[:20000],
+                    "text": note_text(note)[:MAX_NOTE_CHARS],
                 })
         entry["notes"] = notes
     return entry
@@ -1100,20 +1117,24 @@ def searchable_text(item: dict[str, Any]) -> str:
         parts.append(str(entry.get("provider", "")))
         for note in entry.get("notes") or []:
             parts.append(str(note.get("provider", "")))
-            parts.append(str(note.get("summary", "")))
+            parts.append(note_text(note))
     return "\n".join(parts)
 
 
 def match_excerpt(item: dict[str, Any], wanted: str, width: int = 120) -> str:
+    """Um trecho em volta da palavra achada — na resposta final ou numa contribuição."""
     for entry in item.get("messages") or []:
-        text = " ".join(str(entry.get("text", "")).split())
-        position = fold_text(text).find(wanted)
-        if position < 0:
-            continue
-        start = max(0, position - width // 3)
-        end = min(len(text), start + width)
-        excerpt = text[start:end].strip()
-        return ("…" if start > 0 else "") + excerpt + ("…" if end < len(text) else "")
+        considerados = [str(entry.get("text", ""))]
+        considerados += [note_text(note) for note in entry.get("notes") or []]
+        for bruto in considerados:
+            text = " ".join(bruto.split())
+            position = fold_text(text).find(wanted)
+            if position < 0:
+                continue
+            start = max(0, position - width // 3)
+            end = min(len(text), start + width)
+            excerpt = text[start:end].strip()
+            return ("…" if start > 0 else "") + excerpt + ("…" if end < len(text) else "")
     return ""
 
 
@@ -1171,11 +1192,11 @@ def export_markdown(item: dict[str, Any]) -> str:
             lines += ["## Você", "", text, ""]
             continue
         lines += [f"## Resposta da mesa — {provider_label(entry.get('provider'))}", "", text, ""]
-        notes = [note for note in (entry.get("notes") or []) if str(note.get("summary", "")).strip()]
+        notes = [note for note in (entry.get("notes") or []) if note_text(note).strip()]
         if notes:
             lines += ["### Contribuições das IAs", ""]
             for note in notes:
-                lines += [f"**{note.get('provider') or 'IA'}**", "", str(note.get("summary", "")).strip(), ""]
+                lines += [f"**{note.get('provider') or 'IA'}**", "", note_text(note).strip(), ""]
         lines += ["---", ""]
     lines += ["_Gerado pela Mesa de IAs neste computador._", ""]
     return "\n".join(lines)
@@ -1335,14 +1356,14 @@ def export_html(item: dict[str, Any]) -> str:
             f'<p class="rotulo">Resposta da mesa — {escape_html(provider_label(entry.get("provider")))}</p>',
             f'<article class="answer"><div class="text">{markdown_to_html(entry.get("text"))}</div>',
         ]
-        notes = [note for note in (entry.get("notes") or []) if str(note.get("summary", "")).strip()]
+        notes = [note for note in (entry.get("notes") or []) if note_text(note).strip()]
         if notes:
             parts.append('<details class="notes" open><summary>Contribuições das IAs</summary>')
             for note in notes:
                 parts += [
                     '<div class="note">',
                     f"<h4>{escape_html(note.get('provider') or 'IA')}</h4>",
-                    f'<div class="text">{markdown_to_html(note.get("summary"))}</div>',
+                    f'<div class="text">{markdown_to_html(note_text(note))}</div>',
                     "</div>",
                 ]
             parts.append("</details>")

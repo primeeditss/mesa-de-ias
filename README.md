@@ -20,7 +20,7 @@ OpenRouter também está disponível com modelos sem custo. Crie uma conta e uma
 
 Cursor Agent só aparece como disponível quando o comando `cursor-agent` está acessível no PATH. A documentação atual do Cursor orienta a instalação da CLI no Windows via WSL.
 
-Claude Code e OpenCode voltaram a ficar disponíveis. Para pausar algum provedor (por exemplo, um CLI lento), coloque o ID dele em `PAUSED_PROVIDERS` no `server.py` **e** em `pausedProviderIds` no `static/app.js`, e reinicie o servidor. A divisão da barra lateral também é configurável: `mesaPrincipalIds` no `static/app.js` decide quem entra em **Sua mesa**; o resto vai para **Outros detectados**. O modo Completo faz respostas paralelas, uma rodada de revisão e uma síntese final. O modo Rápido pula a revisão cruzada e faz a síntese com as respostas iniciais, reduzindo uma rodada de chamadas sem trocar os modelos selecionados. Ambos respeitam a autenticação, os limites e a cobrança de cada serviço. Durante a conversa, a tela acompanha as etapas e mostra o tempo de cada IA e prévias do texto que chega; ao final, exibe a resposta consolidada com o cronômetro de cada participante e deixa as contribuições individuais disponíveis para consulta. A Mesa mostra respostas e progresso, não o raciocínio privado dos modelos.
+Claude Code e OpenCode voltaram a ficar disponíveis. Para pausar algum provedor (por exemplo, um CLI lento), coloque o ID dele em `PAUSED_PROVIDERS` no `server.py` **e** em `pausedProviderIds` no `static/app.js`, e reinicie o servidor. A divisão da barra lateral também é configurável: `mesaPrincipalIds` no `static/app.js` decide quem entra em **Sua mesa**; o resto vai para **Outros detectados**. O modo Completo faz respostas paralelas, uma rodada de revisão e uma síntese final. O modo Rápido pula a revisão cruzada e faz a síntese com as respostas iniciais, reduzindo uma rodada de chamadas sem trocar os modelos selecionados. Ambos respeitam a autenticação, os limites e a cobrança de cada serviço. Durante a conversa, a tela acompanha as etapas e mostra o tempo de cada IA e prévias do texto que chega; ao final, exibe a resposta consolidada com o cronômetro de cada participante e o botão **Ver as N respostas lado a lado**, que abre o texto completo de cada IA para comparação. A Mesa mostra respostas e progresso, não o raciocínio privado dos modelos.
 
 ## Velocidade
 
@@ -47,6 +47,14 @@ Cada teste tem um prazo (60 s no total): quem não responder dentro dele aparece
 Durante a rodada, o cartão de progresso mostra o tempo de cada IA ("Concluída em 3,4 s" ou "Não respondeu em 12,2 s"). Na resposta final, o título traz o tempo da síntese ("RESPOSTA CONSOLIDADA · Gemini · 2,1 s") e o rodapé **Painel de confiança desta rodada** lista cada participante com o seu tempo — ou com o motivo de ter ficado de fora.
 
 Os tempos valem para a rodada que acabou de acontecer: não são gravados no histórico, então reabrir uma conversa antiga não mostra o rodapé.
+
+## Respostas completas, lado a lado
+
+Cada resposta final traz o botão **Ver as N respostas lado a lado**. Ele abre um painel com o texto **inteiro** que cada IA enviou — sem corte — para você comparar as vozes e conferir de onde veio cada ponto da resposta consolidada.
+
+As respostas aparecem em colunas quando há espaço (duas na largura normal da conversa) e se empilham sozinhas em janelas estreitas ou quando há muitas IAs, para nunca virar texto apertado. Dentro do painel, dois botões escolhem o jeito de ler: **Lado a lado** (padrão) ou **Uma após a outra** — e a sua escolha vale para o resto da sessão. O `×` fecha e devolve o foco ao botão.
+
+Abrir, fechar ou trocar de modo **não faz chamada nenhuma e não gasta cota**: o texto já veio junto com a resposta final, e continua guardado no histórico. O único limite é de tamanho: até 20.000 caracteres por IA (cerca de dez páginas), uma trava de segurança para uma resposta fora do normal não pesar o arquivo nem travar a tela.
 
 ## Histórico de conversas
 

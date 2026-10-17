@@ -25,6 +25,10 @@ const state = {
 
 let searchTimer = 0;
 let exportMenuId = null;
+// Opção A1: como as contribuições aparecem quando abertas — "side" (lado a lado,
+// o padrão) ou "stacked" (uma após a outra). A escolha vale para toda a sessão.
+let contributionsView = "side";
+let contributionSeq = 0;
 
 const providerList = document.querySelector("#providerList");
 const synthesizer = document.querySelector("#synthesizer");
@@ -328,31 +332,117 @@ function addAnswer(text, provider, notes = [], trust = null) {
   body.className = "answer-text";
   renderMarkdown(body, text);
   card.append(heading, body);
-  if (notes.length) {
-    const details = document.createElement("details");
-    details.className = "contribution-details";
-    const summary = document.createElement("summary");
-    summary.textContent = `Ver contribuições das ${notes.length} IAs`;
-    details.append(summary);
-    const list = document.createElement("div");
-    list.className = "contribution-list";
-    for (const note of notes) {
-      const contribution = document.createElement("section");
-      contribution.className = "contribution-item";
-      const name = document.createElement("h3");
-      name.textContent = note.provider || "IA participante";
-      const content = document.createElement("div");
-      content.className = "answer-text";
-      renderMarkdown(content, note.summary || "");
-      contribution.append(name, content);
-      list.append(contribution);
-    }
-    details.append(list);
-    card.append(details);
-  }
+  if (notes.length) addContributions(card, notes);
   renderTrust(card, trust);
   messages.append(card);
   conversation.scrollTop = conversation.scrollHeight;
+}
+
+// Opção A1 · As respostas completas de cada IA, para comparar.
+// O botão abre um painel com as contribuições lado a lado (padrão) ou uma após a
+// outra. Abrir e fechar não gasta cota: o texto já veio junto com a resposta final.
+function addContributions(card, notes) {
+  const many = notes.length > 1;
+  const panelId = `contributions-${++contributionSeq}`;
+
+  const box = document.createElement("section");
+  box.className = "contributions";
+
+  const toggle = document.createElement("button");
+  toggle.type = "button";
+  toggle.className = "contributions-toggle";
+  toggle.setAttribute("aria-expanded", "false");
+  toggle.setAttribute("aria-controls", panelId);
+
+  const panel = document.createElement("div");
+  panel.className = "contributions-panel";
+  panel.id = panelId;
+  panel.hidden = true;
+
+  const head = document.createElement("div");
+  head.className = "contributions-head";
+  const title = document.createElement("span");
+  title.className = "contributions-title";
+  title.textContent = many ? `Respostas completas das ${notes.length} IAs` : "Resposta completa da IA";
+  head.append(title);
+
+  const modeButtons = [];
+  if (many) {
+    const views = document.createElement("div");
+    views.className = "contributions-views";
+    views.setAttribute("role", "group");
+    views.setAttribute("aria-label", "Como mostrar as respostas");
+    for (const [modo, texto] of [["side", "▥ Lado a lado"], ["stacked", "☰ Uma após a outra"]]) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "contributions-view";
+      button.dataset.view = modo;
+      button.textContent = texto;
+      button.addEventListener("click", () => { contributionsView = modo; applyView(); });
+      modeButtons.push(button);
+      views.append(button);
+    }
+    head.append(views);
+  }
+
+  const close = document.createElement("button");
+  close.type = "button";
+  close.className = "contributions-close";
+  close.setAttribute("aria-label", "Fechar as respostas");
+  close.textContent = "×";
+  close.addEventListener("click", () => {
+    panel.hidden = true;
+    toggle.setAttribute("aria-expanded", "false");
+    toggle.focus();
+  });
+  head.append(close);
+
+  const list = document.createElement("div");
+  list.className = "contribution-list";
+  for (const note of notes) {
+    const contribution = document.createElement("section");
+    contribution.className = "contribution-item";
+    const name = document.createElement("h3");
+    name.textContent = note.provider || "IA participante";
+    const content = document.createElement("div");
+    content.className = "answer-text";
+    // "text" é o nome atual; "summary" era o nome antigo (e vinha cortado em 1.400).
+    renderMarkdown(content, note.text || note.summary || "");
+    contribution.append(name, content);
+    list.append(contribution);
+  }
+
+  function applyView() {
+    if (!many) {
+      list.dataset.view = "stacked";
+      toggle.textContent = "▥ Ver a resposta completa desta IA";
+      return;
+    }
+    list.dataset.view = contributionsView;
+    for (const button of modeButtons) {
+      button.setAttribute("aria-pressed", String(button.dataset.view === contributionsView));
+    }
+    toggle.textContent = contributionsView === "side"
+      ? `▥ Ver as ${notes.length} respostas lado a lado`
+      : `☰ Ver as ${notes.length} respostas de cada IA`;
+  }
+
+  toggle.addEventListener("click", () => {
+    const abrindo = panel.hidden;
+    panel.hidden = !abrindo;
+    toggle.setAttribute("aria-expanded", String(abrindo));
+    if (!abrindo) return;
+    // Se o painel nasceu abaixo da área visível, sobe até ele (sem arrastar quem
+    // está lendo uma conversa antiga lá em cima).
+    const area = conversation.getBoundingClientRect();
+    const topo = panel.getBoundingClientRect().top;
+    if (topo > area.bottom - 60) conversation.scrollTop += topo - area.top - 14;
+  });
+
+  applyView();
+  panel.append(head, list);
+  box.append(toggle, panel);
+  card.append(box);
 }
 
 // Render the models' Markdown with DOM nodes so their output can never inject HTML.
